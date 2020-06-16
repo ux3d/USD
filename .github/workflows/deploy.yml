@@ -28,15 +28,10 @@ jobs:
 
     # Runs a set of commands using the runners shell
     - name: Build USD
-      run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../install
-      
-    - name: Zip Artifact
-      uses: montudor/action-zip@v0.1.0
-      with:
-          args: zip -qq -r ../macos.zip ../install/*
+      run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../artifacts/usd
     
     - name: Create Artifact
       uses: actions/upload-artifact@v1 
       with:
           name: USD
-          path: ../macos.zip
+          path: ../artifacts/usd
