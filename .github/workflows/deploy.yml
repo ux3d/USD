@@ -28,6 +28,4 @@ jobs:
 
     # Runs a set of commands using the runners shell
     - name: Build USD
-      run: |
-        pwd,
-        python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../install
+      run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../install
