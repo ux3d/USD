@@ -30,8 +30,13 @@ jobs:
     - name: Build USD
       run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../install
       
+    - name: Zip Artifact
+      uses: montudor/action-zip@v0.1.0
+      with:
+          args: zip -qq -r ../macos.zip ../install/*
+    
     - name: Create Artifact
       uses: actions/upload-artifact@v1 
       with:
           name: USD
-          path: ../install
+          path: ../macos.zip
