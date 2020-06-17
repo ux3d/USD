@@ -41,5 +41,5 @@ jobs:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
         file: ../artifacts/usd
         asset_name: macOS
-        tag: latest
+        tag: ${{ github.ref }}
         overwrite: true
