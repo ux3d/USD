@@ -8,8 +8,7 @@ on:
   repository_dispatch:
     types: do-something
     
-  # Also trigger on page_build, as well as release created events
-  page_build:
+  # Trigger when release created
   release:
     types: # This configuration does not affect the page_build event above
       - created
@@ -19,7 +18,7 @@ jobs:
   # This workflow contains a single job called "build"
   build:
     # The type of runner that the job will run on
-    runs-on: macos-latest
+    runs-on: self-hosted
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -30,8 +29,17 @@ jobs:
     - name: Build USD
       run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../artifacts/usd
     
-    - name: Create Artifact
-      uses: actions/upload-artifact@v1 
+#    - name: Create Artifact
+#      uses: actions/upload-artifact@v1 
+#      with:
+#          name: macOS
+#          path: ../artifacts/usd
+          
+    - name: Upload binaries to release
+      uses: svenstaro/upload-release-action@v1-release
       with:
-          name: USD
-          path: ../artifacts/usd
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: ../artifacts/usd
+        asset_name: macOS
+        tag: latest
+        overwrite: true
