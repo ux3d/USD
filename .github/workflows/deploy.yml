@@ -27,7 +27,7 @@ jobs:
 
     # Runs a set of commands using the runners shell
     - name: Build USD
-      run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../artifacts/usd
+      run: python3 build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../artifacts/usd
     
     - name: Archive the release
       run: |
