@@ -31,7 +31,7 @@
 #include "pxr/base/tf/staticTokens.h"
 
 #include <mutex>
-#include <embree2/rtcore.h>
+#include <embree3/rtcore.h>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -144,16 +144,13 @@ public:
     ///                   instancer.
     ///   \param id The scene graph ID of this instancer, used when pulling
     ///             data from a scene delegate.
-    ///   \param instancerId If specified, the instancer at this id uses
-    ///                      this instancer as a prototype.
     ///   \return An embree instancer object.
     virtual HdInstancer *CreateInstancer(HdSceneDelegate *delegate,
-                                         SdfPath const& id,
-                                         SdfPath const& instancerId);
+                                         SdfPath const& id) override;
 
     /// Destroy an instancer created with CreateInstancer.
     ///   \param instancer The instancer to be destroyed.
-    virtual void DestroyInstancer(HdInstancer *instancer);
+    virtual void DestroyInstancer(HdInstancer *instancer) override;
 
     /// Create a hydra Rprim, representing scene geometry. This class creates
     /// embree-specialized geometry containers like HdEmbreeMesh which map
@@ -162,12 +159,9 @@ public:
     ///                 from GetSupportedRprimTypes().
     ///   \param rprimId The scene graph ID of this rprim, used when pulling
     ///                  data from a scene delegate.
-    ///   \param instancerId If specified, the instancer at this id uses the
-    ///                      new rprim as a prototype.
     ///   \return An embree rprim object.
     virtual HdRprim *CreateRprim(TfToken const& typeId,
-                                 SdfPath const& rprimId,
-                                 SdfPath const& instancerId) override;
+                                 SdfPath const& rprimId) override;
 
     /// Destroy an Rprim created with CreateRprim.
     ///   \param rPrim The rprim to be destroyed.
@@ -286,7 +280,7 @@ private:
 
     // A callback that interprets embree error codes and injects them into
     // the hydra logging system.
-    static void HandleRtcError(const RTCError code, const char *msg);
+    static void HandleRtcError(void* userPtr, RTCError code, const char *msg);
 };
 
 

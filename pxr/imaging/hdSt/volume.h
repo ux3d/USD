@@ -29,24 +29,16 @@
 #include "pxr/imaging/hd/version.h"
 #include "pxr/imaging/hd/volume.h"
 
-#include "pxr/usd/sdf/path.h"
-
-#include <memory>
-
 PXR_NAMESPACE_OPEN_SCOPE
 
 class HdStDrawItem;
-class HdStMaterial;
-using HdStFieldResourceSharedPtr = std::shared_ptr<class HdStFieldResource>;
-using HdStShaderCodeSharedPtr = boost::shared_ptr<class HdStShaderCode>;
-class HdSceneDelegate;
 
 /// Represents a Volume Prim.
 ///
 class HdStVolume final : public HdVolume {
 public:
     HDST_API
-    HdStVolume(SdfPath const& id, SdfPath const& instancerId = SdfPath());
+    HdStVolume(SdfPath const& id);
     HDST_API
     ~HdStVolume() override;
 
@@ -65,6 +57,10 @@ public:
     /// Default step size used for raymarching for lighting computation
     static const float defaultStepSizeLighting;
 
+    /// Default memory limit for a field texture (in Mb) if not
+    /// overridden by field prim with textureMemory.
+    static const float defaultMaxTextureMemoryPerField;
+
 protected:
     void _InitRepr(TfToken const &reprToken,
                    HdDirtyBits* dirtyBits) override;
@@ -76,25 +72,11 @@ protected:
                      HdDirtyBits *dirtyBitsState);
 
 private:
-    using _NameToFieldResource = std::unordered_map<
-        TfToken, HdStFieldResourceSharedPtr, TfToken::HashFunctor>;
-
     const TfToken& _GetMaterialTag(const HdRenderIndex &renderIndex) const;
 
     void _UpdateDrawItem(HdSceneDelegate *sceneDelegate,
                          HdStDrawItem *drawItem,
                          HdDirtyBits *dirtyBits);
-
-    _NameToFieldResource _ComputeNameToFieldResource(
-        HdSceneDelegate *sceneDelegate);
-
-    static HdStShaderCodeSharedPtr
-    _ComputeMaterialShaderAndBBox(
-        HdSceneDelegate * const sceneDelegate,
-        const HdStMaterial * const material,
-        const HdStShaderCodeSharedPtr &volumeShader,
-        const _NameToFieldResource &nameToFieldResource,
-        GfBBox3d * localVolumeBBox);
 
     HdReprSharedPtr _volumeRepr;
 };

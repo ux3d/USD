@@ -1,6 +1,6 @@
-project(usd)
-
 cmake_minimum_required(VERSION 3.12)
+
+project(usd)
 
 if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     if (WIN32)
@@ -44,8 +44,16 @@ pxr_toplevel_prologue()
 add_subdirectory(pxr)
 add_subdirectory(extras)
 
-if (${PXR_BUILD_PRMAN_PLUGIN})
-    add_subdirectory(third_party/renderman-${RENDERMAN_VERSION_MAJOR})
+if (PXR_BUILD_PRMAN_PLUGIN)
+    set(prmanPluginPath "third_party/renderman-${RENDERMAN_VERSION_MAJOR}")
+
+    get_filename_component(prmanPluginAbsPath "${prmanPluginPath}" ABSOLUTE)
+    if (EXISTS "${prmanPluginAbsPath}")
+        add_subdirectory("${prmanPluginPath}")
+    else()
+        message(FATAL_ERROR "No RenderMan plugin available for "
+                "RenderMan ${RENDERMAN_VERSION_MAJOR}")
+    endif()
 endif()
 
 if (PXR_BUILD_DOCUMENTATION)

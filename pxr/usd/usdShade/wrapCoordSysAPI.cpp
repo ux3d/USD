@@ -49,6 +49,15 @@ namespace {
 WRAP_CUSTOM;
 
 
+static std::string
+_Repr(const UsdShadeCoordSysAPI &self)
+{
+    std::string primRepr = TfPyRepr(self.GetPrim());
+    return TfStringPrintf(
+        "UsdShade.CoordSysAPI(%s)",
+        primRepr.c_str());
+}
+
 } // anonymous namespace
 
 void wrapUsdShadeCoordSysAPI()
@@ -79,6 +88,7 @@ void wrapUsdShadeCoordSysAPI()
         .def(!self)
 
 
+        .def("__repr__", ::_Repr)
     ;
 
     _CustomWrapCode(cls);
@@ -116,7 +126,7 @@ struct _BindingToTuple {
 
 WRAP_CUSTOM {
     _class
-        .def("HasLocalBindings", &UsdShadeCoordSysAPI::Bind)
+        .def("HasLocalBindings", &UsdShadeCoordSysAPI::HasLocalBindings)
         .def("GetLocalBindings",
              &UsdShadeCoordSysAPI::GetLocalBindings,
              return_value_policy<TfPySequenceToList>())
@@ -129,6 +139,9 @@ WRAP_CUSTOM {
         .def("GetCoordSysRelationshipName",
             &UsdShadeCoordSysAPI::GetCoordSysRelationshipName)
         .staticmethod("GetCoordSysRelationshipName")
+        .def("CanContainPropertyName", 
+            &UsdShadeCoordSysAPI::CanContainPropertyName, arg("name"))
+        .staticmethod("CanContainPropertyName")
         ;
 
      // Register to and from python conversion for parameter pairs

@@ -21,9 +21,9 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include "pxr/pxr.h"
 
-#include "pxr/imaging/glf/glew.h"
+#include "pxr/imaging/garch/glApi.h"
+
 #include "pxr/imaging/glf/contextCaps.h"
 #include "pxr/imaging/glf/diagnostic.h"
 #include "pxr/imaging/glf/drawTarget.h"
@@ -58,13 +58,16 @@ int main(int argc, char *argv[])
     // prepare GL context
     GarchGLDebugWindow window("Hdx Test", 256, 256);
     window.Init();
-    GlfGlewInit();
+    GarchGLApiLoad();
+
     glViewport(0, 0, 256, 256);
     // wrap into GlfGLContext so that GlfDrawTarget works
     GlfGLContextSharedPtr ctx = GlfGLContext::GetCurrentGLContext();
     GlfContextCaps::InitInstance();
 
-    std::unique_ptr<Hgi> hgi(Hgi::GetPlatformDefaultHgi());
+    // Hgi and HdDriver should be constructed before HdEngine to ensure they
+    // are destructed last. Hgi may be used during engine/delegate destruction.
+    HgiUniquePtr hgi = Hgi::CreatePlatformDefaultHgi();
     HdDriver driver{HgiTokens->renderDriver, VtValue(hgi.get())};
 
     HdEngine engine;
@@ -80,6 +83,17 @@ int main(int argc, char *argv[])
     SdfPath renderTask1("/renderTask1");
     delegate->AddRenderSetupTask(renderSetupTask1);
     delegate->AddRenderTask(renderTask1);
+
+    // update viewport param (defaults to (0,0,512,512) otherwise)
+    {
+        VtValue vParam = delegate->GetTaskParam(renderSetupTask1,
+                                                HdTokens->params);
+        HdxRenderTaskParams param = vParam.Get<HdxRenderTaskParams>();
+        param.viewport = GfVec4d(0, 0, 256, 256);
+        delegate->SetTaskParam(renderSetupTask1, HdTokens->params,
+                               VtValue(param));
+    }
+
     HdTaskSharedPtrVector tasks;
     tasks.push_back(index->GetTask(renderSetupTask1));
     tasks.push_back(index->GetTask(renderTask1));

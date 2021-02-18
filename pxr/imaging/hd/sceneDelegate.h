@@ -34,7 +34,6 @@
 #include "pxr/imaging/hd/meshTopology.h"
 #include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/repr.h"
-#include "pxr/imaging/hd/textureResource.h"
 #include "pxr/imaging/hd/timeSampleArray.h"
 
 #include "pxr/imaging/pxOsd/subdivTags.h"
@@ -56,6 +55,9 @@ class HdExtComputationContext;
 
 /// A shared pointer to a vector of id's.
 typedef std::shared_ptr<SdfPathVector> HdIdVectorSharedPtr;
+
+/// Instancer context: a pair of instancer paths and instance indices.
+typedef std::vector<std::pair<SdfPath, int>> HdInstancerContext;
 
 /// \class HdSyncRequestVector
 ///
@@ -84,6 +86,10 @@ struct HdDisplayStyle {
     
     /// Is the prim displacement shaded.
     bool displacementEnabled;
+
+    /// Does the prim act "transparent" to allow occluded selection to show
+    /// through?
+    bool occludedSelectionShowsThrough;
     
     /// Creates a default DisplayStyle.
     /// - refineLevel is 0.
@@ -93,6 +99,7 @@ struct HdDisplayStyle {
         : refineLevel(0)
         , flatShadingEnabled(false)
         , displacementEnabled(true)
+        , occludedSelectionShowsThrough(false)
     { }
     
     /// Creates a DisplayStyle.
@@ -100,12 +107,16 @@ struct HdDisplayStyle {
     ///        Valid range is [0, 8].
     /// \param flatShading enables flat shading, defaults to false.
     /// \param displacement enables displacement shading, defaults to false.
+    /// \param occludedSelectionShowsThrough controls whether the prim lets
+    ///        occluded selection show through it, defaults to false.
     HdDisplayStyle(int refineLevel_,
                    bool flatShading = false,
-                   bool displacement = true)
+                   bool displacement = true,
+                   bool occludedSelectionShowsThrough_ = false)
         : refineLevel(std::max(0, refineLevel_))
         , flatShadingEnabled(flatShading)
         , displacementEnabled(displacement)
+        , occludedSelectionShowsThrough(occludedSelectionShowsThrough_)
     {
         if (refineLevel_ < 0) {
             TF_CODING_ERROR("negative refine level is not supported");
@@ -120,7 +131,9 @@ struct HdDisplayStyle {
     bool operator==(HdDisplayStyle const& rhs) const {
         return refineLevel == rhs.refineLevel
             && flatShadingEnabled == rhs.flatShadingEnabled
-            && displacementEnabled == rhs.displacementEnabled;
+            && displacementEnabled == rhs.displacementEnabled
+            && occludedSelectionShowsThrough ==
+                rhs.occludedSelectionShowsThrough;
     }
     bool operator!=(HdDisplayStyle const& rhs) const {
         return !(*this == rhs);
@@ -569,15 +582,21 @@ public:
     HD_API
     virtual GfMatrix4d GetInstancerTransform(SdfPath const &instancerId);
 
+    /// Returns the parent instancer of the given rprim or instancer.
+    HD_API
+    virtual SdfPath GetInstancerId(SdfPath const& primId);
+
     // -----------------------------------------------------------------------//
     /// \name Path Translation
     // -----------------------------------------------------------------------//
 
     /// Returns the scene address of the prim corresponding to the given
-    /// rprim/instance index.
+    /// rprim/instance index. This is designed to give paths in scene namespace,
+    /// rather than hydra namespace, so it always strips the delegate ID.
     HD_API
     virtual SdfPath GetScenePrimPath(SdfPath const& rprimId,
-                                     int instanceIndex);
+                                     int instanceIndex,
+                                     HdInstancerContext *instancerContext = nullptr);
 
     // -----------------------------------------------------------------------//
     /// \name Material Aspects
@@ -591,18 +610,6 @@ public:
     // needed to create a material.
     HD_API 
     virtual VtValue GetMaterialResource(SdfPath const &materialId);
-
-    // -----------------------------------------------------------------------//
-    /// \name Texture Aspects
-    // -----------------------------------------------------------------------//
-
-    /// Returns the texture resource ID for a given texture ID.
-    HD_API
-    virtual HdTextureResource::ID GetTextureResourceID(SdfPath const& textureId);
-
-    /// Returns the texture resource for a given texture ID.
-    HD_API
-    virtual HdTextureResourceSharedPtr GetTextureResource(SdfPath const& textureId);
 
     // -----------------------------------------------------------------------//
     /// \name Renderbuffer Aspects

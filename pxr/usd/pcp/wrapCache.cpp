@@ -150,10 +150,12 @@ _ComputeRelationshipTargetPaths( PcpCache &cache, const SdfPath & path,
 {
     PcpErrorVector errors;
     SdfPathVector result;
+    SdfPathVector deletedPaths;
     cache.ComputeRelationshipTargetPaths(path, &result, localOnly,
                                          stopProperty, includeStopProperty,
+                                         &deletedPaths,
                                          &errors);
-    return boost::python::make_tuple(result, errors);
+    return boost::python::make_tuple(result, deletedPaths, errors);
 }
 
 static boost::python::tuple
@@ -164,10 +166,12 @@ _ComputeAttributeConnectionPaths( PcpCache &cache, const SdfPath & path,
 {
     PcpErrorVector errors;
     SdfPathVector result;
+    SdfPathVector deletedPaths;
     cache.ComputeAttributeConnectionPaths(path, &result, localOnly,
                                           stopProperty, includeStopProperty,
+                                          &deletedPaths,
                                           &errors);
-    return boost::python::make_tuple(result, errors);
+    return boost::python::make_tuple(result, deletedPaths, errors);
 }
 
 static void
@@ -237,7 +241,8 @@ wrapCache()
         // Note: The following parameters are not wrapped as a properties
         // because setting them may require returning additional out-
         // parameters representing the resulting cache invalidation.
-        .def("GetLayerStackIdentifier", &PcpCache::GetLayerStackIdentifier)
+        .def("GetLayerStackIdentifier", &PcpCache::GetLayerStackIdentifier,
+             return_value_policy<return_by_value>())
         .def("SetVariantFallbacks", &_SetVariantFallbacks)
         .def("GetVariantFallbacks", &PcpCache::GetVariantFallbacks,
              return_value_policy<TfPyMapToDictionary>())

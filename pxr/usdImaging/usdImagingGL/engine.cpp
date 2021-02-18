@@ -21,7 +21,8 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include "pxr/imaging/glf/glew.h"
+#include "pxr/imaging/garch/glApi.h"
+
 #include "pxr/usdImaging/usdImagingGL/engine.h"
 
 #include "pxr/usdImaging/usdImagingGL/legacyEngine.h"
@@ -38,23 +39,29 @@
 
 #include "pxr/imaging/hd/rendererPlugin.h"
 #include "pxr/imaging/hd/rendererPluginRegistry.h"
+#include "pxr/imaging/hdx/pickTask.h"
 #include "pxr/imaging/hdx/taskController.h"
 #include "pxr/imaging/hdx/tokens.h"
 
 #include "pxr/imaging/hgi/hgi.h"
 #include "pxr/imaging/hgi/tokens.h"
 
+#include "pxr/base/tf/envSetting.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/stl.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3d.h"
 
+#include <string>
+
 PXR_NAMESPACE_OPEN_SCOPE
+
+TF_DEFINE_ENV_SETTING(USDIMAGINGGL_ENGINE_DEBUG_SCENE_DELEGATE_ID, "/",
+                      "Default usdImaging scene delegate id");
 
 namespace {
 
-static
 bool
 _GetHydraEnabledEnvVar()
 {
@@ -65,15 +72,23 @@ _GetHydraEnabledEnvVar()
     return TfGetenv("HD_ENABLED", "1") == "1";
 }
 
-static
+SdfPath const&
+_GetUsdImagingDelegateId()
+{
+    static SdfPath const delegateId =
+        SdfPath(TfGetEnvSetting(USDIMAGINGGL_ENGINE_DEBUG_SCENE_DELEGATE_ID));
+
+    return delegateId;
+}
+
 void _InitGL()
 {
     static std::once_flag initFlag;
 
     std::call_once(initFlag, []{
 
-        // Initialize Glew library for GL Extensions if needed
-        GlfGlewInit();
+        // Initialize GL library for GL Extensions if needed
+        GarchGLApiLoad();
 
         // Initialize if needed and switch to shared GL context.
         GlfSharedGLContextScopeHolder sharedContext;
@@ -84,7 +99,6 @@ void _InitGL()
     });
 }
 
-static
 bool
 _IsHydraEnabled()
 {
@@ -125,53 +139,26 @@ UsdImagingGLEngine::IsHydraEnabled()
 // Construction
 //----------------------------------------------------------------------------
 
-UsdImagingGLEngine::UsdImagingGLEngine()
-    : _renderIndex(nullptr)
-    , _hgi(Hgi::GetPlatformDefaultHgi())
-    , _hgiDriver{HgiTokens->renderDriver, VtValue(_hgi.get())}
-    , _selTracker(new HdxSelectionTracker)
-    , _delegateID(SdfPath::AbsoluteRootPath())
-    , _delegate(nullptr)
-    , _rendererPlugin(nullptr)
-    , _taskController(nullptr)
-    , _selectionColor(1.0f, 1.0f, 0.0f, 1.0f)
-    , _rootPath(SdfPath::AbsoluteRootPath())
-    , _excludedPrimPaths()
-    , _invisedPrimPaths()
-    , _isPopulated(false)
+UsdImagingGLEngine::UsdImagingGLEngine(const HdDriver& driver)
+    : UsdImagingGLEngine(SdfPath::AbsoluteRootPath(),
+            {},
+            {},
+            _GetUsdImagingDelegateId(),
+            driver
+        )
 {
-    _InitGL();
-
-    if (IsHydraEnabled()) {
-
-        // _renderIndex, _taskController, and _delegate are initialized
-        // by the plugin system.
-        if (!SetRendererPlugin(_GetDefaultRendererPluginId())) {
-            TF_CODING_ERROR("No renderer plugins found! "
-                            "Check before creation.");
-        }
-
-    } else {
-
-        SdfPathVector excluded;
-        _legacyImpl.reset(new UsdImagingGLLegacyEngine(excluded));
-
-    }
 }
 
 UsdImagingGLEngine::UsdImagingGLEngine(
     const SdfPath& rootPath,
     const SdfPathVector& excludedPaths,
     const SdfPathVector& invisedPaths,
-    const SdfPath& delegateID)
-    : _renderIndex(nullptr)
-    , _hgi(Hgi::GetPlatformDefaultHgi())
-    , _hgiDriver{HgiTokens->renderDriver, VtValue(_hgi.get())}
-    , _selTracker(new HdxSelectionTracker)
-    , _delegateID(delegateID)
-    , _delegate(nullptr)
-    , _rendererPlugin(nullptr)
-    , _taskController(nullptr)
+    const SdfPath& sceneDelegateID,
+    const HdDriver& driver)
+    : _hgi()
+    , _hgiDriver(driver)
+    , _sceneDelegateId(sceneDelegateID)
+    , _selTracker(std::make_shared<HdxSelectionTracker>())
     , _selectionColor(1.0f, 1.0f, 0.0f, 1.0f)
     , _rootPath(rootPath)
     , _excludedPrimPaths(excludedPaths)
@@ -182,7 +169,7 @@ UsdImagingGLEngine::UsdImagingGLEngine(
 
     if (IsHydraEnabled()) {
 
-        // _renderIndex, _taskController, and _delegate are initialized
+        // _renderIndex, _taskController, and _sceneDelegate are initialized
         // by the plugin system.
         if (!SetRendererPlugin(_GetDefaultRendererPluginId())) {
             TF_CODING_ERROR("No renderer plugins found! "
@@ -196,13 +183,26 @@ UsdImagingGLEngine::UsdImagingGLEngine(
         SdfPathVector pathsToExclude = excludedPaths;
         pathsToExclude.insert(pathsToExclude.end(), 
             invisedPaths.begin(), invisedPaths.end());
-        _legacyImpl.reset(new UsdImagingGLLegacyEngine(pathsToExclude));
+        _legacyImpl =std::make_unique<UsdImagingGLLegacyEngine>(pathsToExclude);
     }
 }
 
+void
+UsdImagingGLEngine::_DestroyHydraObjects()
+{
+    // Destroy objects in opposite order of construction.
+    _engine = nullptr;
+    _taskController = nullptr;
+    _sceneDelegate = nullptr;
+    _renderIndex = nullptr;
+    _renderDelegate = nullptr;
+}
+
 UsdImagingGLEngine::~UsdImagingGLEngine()
-{ 
-    _DeleteHydraResources();
+{
+    TF_PY_ALLOW_THREADS_IN_SCOPE();
+
+    _DestroyHydraObjects();
 }
 
 //----------------------------------------------------------------------------
@@ -220,22 +220,42 @@ UsdImagingGLEngine::PrepareBatch(
 
     HD_TRACE_FUNCTION();
 
-    TF_VERIFY(_delegate);
+    TF_VERIFY(_sceneDelegate);
 
-    if (_CanPrepareBatch(root, params)) {
+    if (_CanPrepare(root)) {
         if (!_isPopulated) {
-            _delegate->SetUsdDrawModesEnabled(params.enableUsdDrawModes);
-            _delegate->Populate(root.GetStage()->GetPrimAtPath(_rootPath),
-                               _excludedPrimPaths);
-            _delegate->SetInvisedPrimPaths(_invisedPrimPaths);
+            _sceneDelegate->SetUsdDrawModesEnabled(params.enableUsdDrawModes);
+            _sceneDelegate->Populate(
+                root.GetStage()->GetPrimAtPath(_rootPath),
+                _excludedPrimPaths);
+            _sceneDelegate->SetInvisedPrimPaths(_invisedPrimPaths);
             _isPopulated = true;
         }
 
-        _PreSetTime(root, params);
+        _PreSetTime(params);
         // SetTime will only react if time actually changes.
-        _delegate->SetTime(params.frame);
-        _PostSetTime(root, params);
+        _sceneDelegate->SetTime(params.frame);
+        _PostSetTime(params);
     }
+}
+
+void
+UsdImagingGLEngine::_PrepareRender(const UsdImagingGLRenderParams& params)
+{
+    TF_VERIFY(_taskController);
+
+    _taskController->SetFreeCameraClipPlanes(params.clipPlanes);
+
+    TfTokenVector renderTags;
+    _ComputeRenderTags(params, &renderTags);
+    _taskController->SetRenderTags(renderTags);
+
+    _taskController->SetRenderParams(
+        _MakeHydraUsdImagingGLRenderParams(params));
+
+    // Forward scene materials enable option to delegate
+    _sceneDelegate->SetSceneMaterialsEnabled(params.enableSceneMaterials);
+    _sceneDelegate->SetSceneLightsEnabled(params.enableSceneLights);
 }
 
 void
@@ -249,21 +269,12 @@ UsdImagingGLEngine::RenderBatch(
 
     TF_VERIFY(_taskController);
 
-    _taskController->SetFreeCameraClipPlanes(params.clipPlanes);
     _UpdateHydraCollection(&_renderCollection, paths, params);
     _taskController->SetCollection(_renderCollection);
 
-    TfTokenVector renderTags;
-    _ComputeRenderTags(params, &renderTags);
-    _taskController->SetRenderTags(renderTags);
+    _PrepareRender(params);
 
-    HdxRenderTaskParams hdParams = _MakeHydraUsdImagingGLRenderParams(params);
-
-    _taskController->SetRenderParams(hdParams);
-    _taskController->SetEnableSelection(params.highlight);
-
-    SetColorCorrectionSettings(params.colorCorrectionMode, 
-                               params.renderResolution);
+    SetColorCorrectionSettings(params.colorCorrectionMode);
 
     // XXX App sets the clear color via 'params' instead of setting up Aovs 
     // that has clearColor in their descriptor. So for now we must pass this
@@ -276,11 +287,9 @@ UsdImagingGLEngine::RenderBatch(
             HdAovTokens->color, colorAovDesc);
     }
 
-    // Forward scene materials enable option to delegate
-    _delegate->SetSceneMaterialsEnabled(params.enableSceneMaterials);
-
+    _taskController->SetEnableSelection(params.highlight);
     VtValue selectionValue(_selTracker);
-    _engine.SetTaskContextData(HdxTokens->selectionState, selectionValue);
+    _engine->SetTaskContextData(HdxTokens->selectionState, selectionValue);
     _Execute(params, _taskController->GetRenderingTasks());
 }
 
@@ -299,18 +308,11 @@ UsdImagingGLEngine::Render(
 
     // XXX(UsdImagingPaths): Is it correct to map USD root path directly
     // to the cachePath here?
-    SdfPath cachePath = root.GetPath();
-    SdfPathVector paths(1, _delegate->ConvertCachePathToIndexPath(cachePath));
+    const SdfPath cachePath = root.GetPath();
+    const SdfPathVector paths = {
+        _sceneDelegate->ConvertCachePathToIndexPath(cachePath) };
 
     RenderBatch(paths, params);
-}
-
-void
-UsdImagingGLEngine::InvalidateBuffers()
-{
-    if (ARCH_UNLIKELY(_legacyImpl)) {
-        return _legacyImpl->InvalidateBuffers();
-    }
 }
 
 bool
@@ -335,8 +337,8 @@ UsdImagingGLEngine::SetRootTransform(GfMatrix4d const& xf)
         return;
     }
 
-    TF_VERIFY(_delegate);
-    _delegate->SetRootTransform(xf);
+    TF_VERIFY(_sceneDelegate);
+    _sceneDelegate->SetRootTransform(xf);
 }
 
 void
@@ -346,8 +348,8 @@ UsdImagingGLEngine::SetRootVisibility(bool isVisible)
         return;
     }
 
-    TF_VERIFY(_delegate);
-    _delegate->SetRootVisibility(isVisible);
+    TF_VERIFY(_sceneDelegate);
+    _sceneDelegate->SetRootVisibility(isVisible);
 }
 
 //----------------------------------------------------------------------------
@@ -367,6 +369,46 @@ UsdImagingGLEngine::SetRenderViewport(GfVec4d const& viewport)
 }
 
 void
+UsdImagingGLEngine::SetFraming(CameraUtilFraming const& framing)
+{
+    if (ARCH_UNLIKELY(_legacyImpl)) {
+        // legacy implementation does not support camera framing.
+        return;
+    }
+
+    if (TF_VERIFY(_taskController)) {
+        _taskController->SetFraming(framing);
+    }
+}
+
+void
+UsdImagingGLEngine::SetOverrideWindowPolicy(
+    const std::pair<bool, CameraUtilConformWindowPolicy> &policy)
+{
+    if (ARCH_UNLIKELY(_legacyImpl)) {
+        // legacy implementation does not support camera framing.
+        return;
+    }
+
+    if (TF_VERIFY(_taskController)) {
+        _taskController->SetOverrideWindowPolicy(policy);
+    }
+}
+
+void
+UsdImagingGLEngine::SetRenderBufferSize(GfVec2i const& size)
+{
+    if (ARCH_UNLIKELY(_legacyImpl)) {
+        // legacy implementation does not support camera framing.
+        return;
+    }
+
+    if (TF_VERIFY(_taskController)) {
+        _taskController->SetRenderBufferSize(size);
+    }
+}
+
+void
 UsdImagingGLEngine::SetWindowPolicy(CameraUtilConformWindowPolicy policy)
 {
     if (ARCH_UNLIKELY(_legacyImpl)) {
@@ -379,7 +421,7 @@ UsdImagingGLEngine::SetWindowPolicy(CameraUtilConformWindowPolicy policy)
     // pre-adjusted for the viewport size.
     
     // The usdImagingDelegate manages the window policy for scene cameras.
-    _delegate->SetWindowPolicy(policy);
+    _sceneDelegate->SetWindowPolicy(policy);
 }
 
 void
@@ -395,7 +437,7 @@ UsdImagingGLEngine::SetCameraPath(SdfPath const& id)
 
     // The camera that is set for viewing will also be used for
     // time sampling.
-    _delegate->SetCameraForSampling(id);
+    _sceneDelegate->SetCameraForSampling(id);
 }
 
 void 
@@ -489,18 +531,19 @@ UsdImagingGLEngine::SetSelected(SdfPathVector const& paths)
         return;
     }
 
-    TF_VERIFY(_delegate);
+    TF_VERIFY(_sceneDelegate);
 
     // populate new selection
-    HdSelectionSharedPtr selection(new HdSelection);
+    HdSelectionSharedPtr const selection = std::make_shared<HdSelection>();
     // XXX: Usdview currently supports selection on click. If we extend to
     // rollover (locate) selection, we need to pass that mode here.
-    HdSelection::HighlightMode mode = HdSelection::HighlightModeSelect;
+    static const HdSelection::HighlightMode mode =
+        HdSelection::HighlightModeSelect;
     for (SdfPath const& path : paths) {
-        _delegate->PopulateSelection(mode,
-                                     path,
-                                     UsdImagingDelegate::ALL_INSTANCES,
-                                     selection);
+        _sceneDelegate->PopulateSelection(mode,
+                                          path,
+                                          UsdImagingDelegate::ALL_INSTANCES,
+                                          selection);
     }
 
     // set the result back to selection tracker
@@ -516,8 +559,17 @@ UsdImagingGLEngine::ClearSelected()
 
     TF_VERIFY(_selTracker);
 
-    HdSelectionSharedPtr selection(new HdSelection);
-    _selTracker->SetSelection(selection);
+    _selTracker->SetSelection(std::make_shared<HdSelection>());
+}
+
+HdSelectionSharedPtr
+UsdImagingGLEngine::_GetSelection() const
+{
+    if (HdSelectionSharedPtr const selection = _selTracker->GetSelectionMap()) {
+        return selection;
+    }
+
+    return std::make_shared<HdSelection>();
 }
 
 void
@@ -527,16 +579,15 @@ UsdImagingGLEngine::AddSelected(SdfPath const &path, int instanceIndex)
         return;
     }
 
-    TF_VERIFY(_delegate);
+    TF_VERIFY(_sceneDelegate);
 
-    HdSelectionSharedPtr selection = _selTracker->GetSelectionMap();
-    if (!selection) {
-        selection.reset(new HdSelection);
-    }
+    HdSelectionSharedPtr const selection = _GetSelection();
+
     // XXX: Usdview currently supports selection on click. If we extend to
     // rollover (locate) selection, we need to pass that mode here.
-    HdSelection::HighlightMode mode = HdSelection::HighlightModeSelect;
-    _delegate->PopulateSelection(mode, path, instanceIndex, selection);
+    static const HdSelection::HighlightMode mode =
+        HdSelection::HighlightModeSelect;
+    _sceneDelegate->PopulateSelection(mode, path, instanceIndex, selection);
 
     // set the result back to selection tracker
     _selTracker->SetSelection(selection);
@@ -566,9 +617,11 @@ UsdImagingGLEngine::TestIntersection(
     const UsdPrim& root,
     const UsdImagingGLRenderParams& params,
     GfVec3d *outHitPoint,
+    GfVec3d *outHitNormal,
     SdfPath *outHitPrimPath,
     SdfPath *outHitInstancerPath,
-    int *outHitInstanceIndex)
+    int *outHitInstanceIndex,
+    HdInstancerContext *outInstancerContext)
 {
     if (ARCH_UNLIKELY(_legacyImpl)) {
         return _legacyImpl->TestIntersection(
@@ -582,25 +635,20 @@ UsdImagingGLEngine::TestIntersection(
             outHitInstanceIndex);
     }
 
-    TF_VERIFY(_delegate);
+    TF_VERIFY(_sceneDelegate);
     TF_VERIFY(_taskController);
+
+    PrepareBatch(root, params);
 
     // XXX(UsdImagingPaths): This is incorrect...  "Root" points to a USD
     // subtree, but the subtree in the hydra namespace might be very different
     // (e.g. for native instancing).  We need a translation step.
-    SdfPath cachePath = root.GetPath();
-    SdfPathVector roots(1, _delegate->ConvertCachePathToIndexPath(cachePath));
+    const SdfPath cachePath = root.GetPath();
+    const SdfPathVector roots = {
+        _sceneDelegate->ConvertCachePathToIndexPath(cachePath) };
     _UpdateHydraCollection(&_intersectCollection, roots, params);
 
-    TfTokenVector renderTags;
-    _ComputeRenderTags(params, &renderTags);
-    _taskController->SetRenderTags(renderTags);
-
-    HdxRenderTaskParams hdParams = _MakeHydraUsdImagingGLRenderParams(params);
-    _taskController->SetRenderParams(hdParams);
-
-    // Forward scene materials enable option to delegate
-    _delegate->SetSceneMaterialsEnabled(params.enableSceneMaterials);
+    _PrepareRender(params);
 
     HdxPickHitVector allHits;
     HdxPickTaskContextParams pickParams;
@@ -610,9 +658,9 @@ UsdImagingGLEngine::TestIntersection(
     pickParams.clipPlanes = params.clipPlanes;
     pickParams.collection = _intersectCollection;
     pickParams.outHits = &allHits;
-    VtValue vtPickParams(pickParams);
+    const VtValue vtPickParams(pickParams);
 
-    _engine.SetTaskContextData(HdxPickTokens->pickParams, vtPickParams);
+    _engine->SetTaskContextData(HdxPickTokens->pickParams, vtPickParams);
     _Execute(params, _taskController->GetPickingTasks());
 
     // Since we are in nearest-hit mode, we expect allHits to have
@@ -624,14 +672,17 @@ UsdImagingGLEngine::TestIntersection(
     HdxPickHit &hit = allHits[0];
 
     if (outHitPoint) {
-        *outHitPoint = GfVec3d(hit.worldSpaceHitPoint[0],
-                               hit.worldSpaceHitPoint[1],
-                               hit.worldSpaceHitPoint[2]);
+        *outHitPoint = hit.worldSpaceHitPoint;
     }
 
-    hit.objectId = _delegate->GetScenePrimPath(hit.objectId, hit.instanceIndex);
-    hit.instancerId = _delegate->ConvertIndexPathToCachePath(hit.instancerId)
-                        .GetAbsoluteRootOrPrimPath();
+    if (outHitNormal) {
+        *outHitNormal = hit.worldSpaceHitNormal;
+    }
+
+    hit.objectId = _sceneDelegate->GetScenePrimPath(
+        hit.objectId, hit.instanceIndex, outInstancerContext);
+    hit.instancerId = _sceneDelegate->ConvertIndexPathToCachePath(
+        hit.instancerId).GetAbsoluteRootOrPrimPath();
 
     if (outHitPrimPath) {
         *outHitPrimPath = hit.objectId;
@@ -652,25 +703,32 @@ UsdImagingGLEngine::DecodeIntersection(
     unsigned char const instanceIdColor[4],
     SdfPath *outHitPrimPath,
     SdfPath *outHitInstancerPath,
-    int *outHitInstanceIndex)
+    int *outHitInstanceIndex,
+    HdInstancerContext *outInstancerContext)
 {
     if (ARCH_UNLIKELY(_legacyImpl)) {
         return false;
     }
 
-    TF_VERIFY(_delegate);
+    TF_VERIFY(_sceneDelegate);
 
-    int primId = HdxPickTask::DecodeIDRenderColor(primIdColor);
-    int instanceIdx = HdxPickTask::DecodeIDRenderColor(instanceIdColor);
+    const int primId = HdxPickTask::DecodeIDRenderColor(primIdColor);
+    const int instanceIdx = HdxPickTask::DecodeIDRenderColor(instanceIdColor);
     SdfPath primPath =
-        _delegate->GetRenderIndex().GetRprimPathFromPrimId(primId);
-    SdfPath delegateId, instancerId;
-    _delegate->GetRenderIndex().GetSceneDelegateAndInstancerIds(primPath,
-        &delegateId, &instancerId);
+        _sceneDelegate->GetRenderIndex().GetRprimPathFromPrimId(primId);
 
-    primPath = _delegate->GetScenePrimPath(primPath, instanceIdx);
-    instancerId = _delegate->ConvertIndexPathToCachePath(instancerId)
-                    .GetAbsoluteRootOrPrimPath();
+    if (primPath.IsEmpty()) {
+        return false;
+    }
+
+    SdfPath delegateId, instancerId;
+    _sceneDelegate->GetRenderIndex().GetSceneDelegateAndInstancerIds(
+        primPath, &delegateId, &instancerId);
+
+    primPath = _sceneDelegate->GetScenePrimPath(
+        primPath, instanceIdx, outInstancerContext);
+    instancerId = _sceneDelegate->ConvertIndexPathToCachePath(instancerId)
+                  .GetAbsoluteRootOrPrimPath();
 
     if (outHitPrimPath) {
         *outHitPrimPath = primPath;
@@ -682,7 +740,7 @@ UsdImagingGLEngine::DecodeIntersection(
         *outHitInstanceIndex = instanceIdx;
     }
 
-    return !primPath.IsEmpty();
+    return true;
 }
 
 //----------------------------------------------------------------------------
@@ -736,7 +794,22 @@ UsdImagingGLEngine::GetCurrentRendererId() const
         return TfToken();
     }
 
-    return _rendererId;
+    return _renderDelegate.GetPluginId();
+}
+
+void
+UsdImagingGLEngine::_InitializeHgiIfNecessary()
+{
+    // If the client of UsdImagingGLEngine does not provide a HdDriver, we
+    // construct a default one that is owned by UsdImagingGLEngine.
+    // The cleanest pattern is for the client app to provide this since you
+    // may have multiple UsdImagingGLEngines in one app that ideally all use
+    // the same HdDriver and Hgi to share GPU resources.
+    if (_hgiDriver.driver.IsEmpty()) {
+        _hgi = Hgi::CreatePlatformDefaultHgi();
+        _hgiDriver.name = HgiTokens->renderDriver;
+        _hgiDriver.driver = VtValue(_hgi.get());
+    }
 }
 
 bool
@@ -746,75 +819,99 @@ UsdImagingGLEngine::SetRendererPlugin(TfToken const &id)
         return false;
     }
 
-    HdRendererPlugin *plugin = nullptr;
-    TfToken actualId = id;
+    _InitializeHgiIfNecessary();
 
-    // Special case: TfToken() selects the first plugin in the list.
-    if (actualId.IsEmpty()) {
-        actualId = HdRendererPluginRegistry::GetInstance().
-            GetDefaultPluginId();
-    }
-    plugin = HdRendererPluginRegistry::GetInstance().
-        GetRendererPlugin(actualId);
+    HdRendererPluginRegistry &registry =
+        HdRendererPluginRegistry::GetInstance();
 
-    if (plugin == nullptr) {
-        TF_CODING_ERROR("Couldn't find plugin for id %s", actualId.GetText());
-        return false;
-    } else if (plugin == _rendererPlugin) {
-        // It's a no-op to load the same plugin twice.
-        HdRendererPluginRegistry::GetInstance().ReleasePlugin(plugin);
+    // Special case: id = TfToken() selects the first plugin in the list.
+    const TfToken resolvedId =
+        id.IsEmpty() ? registry.GetDefaultPluginId() : id;
+
+    if ( _renderDelegate && _renderDelegate.GetPluginId() == resolvedId) {
         return true;
-    } else if (!plugin->IsSupported()) {
-        // Don't do anything if the plugin isn't supported on the running
-        // system, just return that we're not able to set it.
-        HdRendererPluginRegistry::GetInstance().ReleasePlugin(plugin);
-        return false;
     }
 
-    HdRenderDelegate *renderDelegate = plugin->CreateRenderDelegate();
+    TF_PY_ALLOW_THREADS_IN_SCOPE();
+
+    HdPluginRenderDelegateUniqueHandle renderDelegate =
+        registry.CreateRenderDelegate(resolvedId);
     if(!renderDelegate) {
-        HdRendererPluginRegistry::GetInstance().ReleasePlugin(plugin);
         return false;
     }
 
-    // Pull old delegate/task controller state.
-    GfMatrix4d rootTransform = GfMatrix4d(1.0);
-    bool isVisible = true;
-    if (_delegate != nullptr) {
-        rootTransform = _delegate->GetRootTransform();
-        isVisible = _delegate->GetRootVisibility();
-    }
-    HdSelectionSharedPtr selection = _selTracker->GetSelectionMap();
-    if (!selection) {
-        selection.reset(new HdSelection);
-    }
-
-    // Delete hydra state.
-    _DeleteHydraResources();
-
-    // Recreate the render index.
-    _rendererPlugin = plugin;
-    _rendererId = actualId;
-
-    _renderIndex = HdRenderIndex::New(renderDelegate, {&_hgiDriver});
-
-    // Create the new delegate & task controller.
-    _delegate = new UsdImagingDelegate(_renderIndex, _delegateID);
-    _isPopulated = false;
-
-    _taskController = new HdxTaskController(_renderIndex,
-        _delegateID.AppendChild(TfToken(TfStringPrintf(
-            "_UsdImaging_%s_%p",
-            TfMakeValidIdentifier(actualId.GetText()).c_str(),
-            this))));
-
-    // Rebuild state in the new delegate/task controller.
-    _delegate->SetRootVisibility(isVisible);
-    _delegate->SetRootTransform(rootTransform);
-    _selTracker->SetSelection(selection);
-    _taskController->SetSelectionColor(_selectionColor);
+    _SetRenderDelegateAndRestoreState(std::move(renderDelegate));
 
     return true;
+}
+
+void
+UsdImagingGLEngine::_SetRenderDelegateAndRestoreState(
+    HdPluginRenderDelegateUniqueHandle &&renderDelegate)
+{
+    // Pull old delegate/task controller state.
+
+    const GfMatrix4d rootTransform =
+        _sceneDelegate ? _sceneDelegate->GetRootTransform() : GfMatrix4d(1.0);
+    const bool isVisible =
+        _sceneDelegate ? _sceneDelegate->GetRootVisibility() : true;
+    HdSelectionSharedPtr const selection = _GetSelection();
+
+    _SetRenderDelegate(std::move(renderDelegate));
+
+    // Rebuild state in the new delegate/task controller.
+    _sceneDelegate->SetRootVisibility(isVisible);
+    _sceneDelegate->SetRootTransform(rootTransform);
+    _selTracker->SetSelection(selection);
+    _taskController->SetSelectionColor(_selectionColor);
+}
+
+SdfPath
+UsdImagingGLEngine::_ComputeControllerPath(
+    const HdPluginRenderDelegateUniqueHandle &renderDelegate)
+{
+    const std::string pluginId =
+        TfMakeValidIdentifier(renderDelegate.GetPluginId().GetText());
+    const TfToken rendererName(
+        TfStringPrintf("_UsdImaging_%s_%p", pluginId.c_str(), this));
+
+    return _sceneDelegateId.AppendChild(rendererName);
+}
+
+void
+UsdImagingGLEngine::_SetRenderDelegate(
+    HdPluginRenderDelegateUniqueHandle &&renderDelegate)
+{
+    // This relies on SetRendererPlugin to release the GIL...
+
+    // Destruction
+    _DestroyHydraObjects();
+
+    _isPopulated = false;
+
+    // Creation
+
+    // Use the new render delegate.
+    _renderDelegate = std::move(renderDelegate);
+
+    // Recreate the render index
+    _renderIndex.reset(
+        HdRenderIndex::New(
+            _renderDelegate.Get(), {&_hgiDriver}));
+
+    // Create the new delegate
+    _sceneDelegate = std::make_unique<UsdImagingDelegate>(
+        _renderIndex.get(), _sceneDelegateId);
+
+    // Create the new task controller
+    _taskController = std::make_unique<HdxTaskController>(
+        _renderIndex.get(),
+        _ComputeControllerPath(_renderDelegate));
+
+    // The task context holds on to resources in the render
+    // deletegate, so we want to destroy it first and thus
+    // create it last.
+    _engine = std::make_unique<HdEngine>();
 }
 
 //----------------------------------------------------------------------------
@@ -831,18 +928,16 @@ UsdImagingGLEngine::GetRendererAovs() const
     TF_VERIFY(_renderIndex);
 
     if (_renderIndex->IsBprimTypeSupported(HdPrimTypeTokens->renderBuffer)) {
-        TfTokenVector aovs;
-        aovs.push_back(HdAovTokens->color);
 
-        TfToken candidates[] =
+        static const TfToken candidates[] =
             { HdAovTokens->primId,
               HdAovTokens->depth,
               HdAovTokens->normal,
               HdAovTokensMakePrimvar(TfToken("st")) };
 
-        HdRenderDelegate *renderDelegate = _renderIndex->GetRenderDelegate();
+        TfTokenVector aovs = { HdAovTokens->color };
         for (auto const& aov : candidates) {
-            if (renderDelegate->GetDefaultAovDescriptor(aov).format 
+            if (_renderDelegate->GetDefaultAovDescriptor(aov).format 
                     != HdFormatInvalid) {
                 aovs.push_back(aov);
             }
@@ -867,6 +962,22 @@ UsdImagingGLEngine::SetRendererAov(TfToken const &id)
     return false;
 }
 
+HgiTextureHandle
+UsdImagingGLEngine::GetAovTexture(
+    TfToken const& name) const
+{
+    VtValue aov;
+    HgiTextureHandle aovTexture;
+
+    if (_engine->GetTaskContextData(name, &aov)) {
+        if (aov.IsHolding<HgiTextureHandle>()) {
+            aovTexture = aov.Get<HgiTextureHandle>();
+        }
+    }
+
+    return aovTexture;
+}
+
 UsdImagingGLRendererSettingsList
 UsdImagingGLEngine::GetRendererSettingsList() const
 {
@@ -874,10 +985,10 @@ UsdImagingGLEngine::GetRendererSettingsList() const
         return UsdImagingGLRendererSettingsList();
     }
 
-    TF_VERIFY(_renderIndex);
+    TF_VERIFY(_renderDelegate);
 
-    HdRenderSettingDescriptorList descriptors =
-        _renderIndex->GetRenderDelegate()->GetRenderSettingDescriptors();
+    const HdRenderSettingDescriptorList descriptors =
+        _renderDelegate->GetRenderSettingDescriptors();
     UsdImagingGLRendererSettingsList ret;
 
     for (auto const& desc : descriptors) {
@@ -917,8 +1028,8 @@ UsdImagingGLEngine::GetRendererSetting(TfToken const& id) const
         return VtValue();
     }
 
-    TF_VERIFY(_renderIndex);
-    return _renderIndex->GetRenderDelegate()->GetRenderSetting(id);
+    TF_VERIFY(_renderDelegate);
+    return _renderDelegate->GetRenderSetting(id);
 }
 
 void
@@ -928,8 +1039,20 @@ UsdImagingGLEngine::SetRendererSetting(TfToken const& id, VtValue const& value)
         return;
     }
 
-    TF_VERIFY(_renderIndex);
-    _renderIndex->GetRenderDelegate()->SetRenderSetting(id, value);
+    TF_VERIFY(_renderDelegate);
+    _renderDelegate->SetRenderSetting(id, value);
+}
+
+void
+UsdImagingGLEngine::SetEnablePresentation(bool enabled)
+{
+    if (ARCH_UNLIKELY(_legacyImpl)) {
+        return;
+    }
+
+    if (TF_VERIFY(_taskController)) {
+        _taskController->SetEnablePresentation(enabled);
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -942,8 +1065,8 @@ UsdImagingGLEngine::IsPauseRendererSupported() const
         return false;
     }
 
-    TF_VERIFY(_renderIndex);
-    return _renderIndex->GetRenderDelegate()->IsPauseSupported();
+    TF_VERIFY(_renderDelegate);
+    return _renderDelegate->IsPauseSupported();
 }
 
 bool
@@ -953,8 +1076,10 @@ UsdImagingGLEngine::PauseRenderer()
         return false;
     }
 
-    TF_VERIFY(_renderIndex);
-    return _renderIndex->GetRenderDelegate()->Pause();
+    TF_PY_ALLOW_THREADS_IN_SCOPE();
+
+    TF_VERIFY(_renderDelegate);
+    return _renderDelegate->Pause();
 }
 
 bool
@@ -964,8 +1089,10 @@ UsdImagingGLEngine::ResumeRenderer()
         return false;
     }
 
-    TF_VERIFY(_renderIndex);
-    return _renderIndex->GetRenderDelegate()->Resume();
+    TF_PY_ALLOW_THREADS_IN_SCOPE();
+
+    TF_VERIFY(_renderDelegate);
+    return _renderDelegate->Resume();
 }
 
 bool
@@ -975,8 +1102,8 @@ UsdImagingGLEngine::IsStopRendererSupported() const
         return false;
     }
 
-    TF_VERIFY(_renderIndex);
-    return _renderIndex->GetRenderDelegate()->IsStopSupported();
+    TF_VERIFY(_renderDelegate);
+    return _renderDelegate->IsStopSupported();
 }
 
 bool
@@ -986,8 +1113,10 @@ UsdImagingGLEngine::StopRenderer()
         return false;
     }
 
-    TF_VERIFY(_renderIndex);
-    return _renderIndex->GetRenderDelegate()->Stop();
+    TF_PY_ALLOW_THREADS_IN_SCOPE();
+
+    TF_VERIFY(_renderDelegate);
+    return _renderDelegate->Stop();
 }
 
 bool
@@ -997,8 +1126,10 @@ UsdImagingGLEngine::RestartRenderer()
         return false;
     }
 
-    TF_VERIFY(_renderIndex);
-    return _renderIndex->GetRenderDelegate()->Restart();
+    TF_PY_ALLOW_THREADS_IN_SCOPE();
+
+    TF_VERIFY(_renderDelegate);
+    return _renderDelegate->Restart();
 }
 
 //----------------------------------------------------------------------------
@@ -1006,8 +1137,7 @@ UsdImagingGLEngine::RestartRenderer()
 //----------------------------------------------------------------------------
 void 
 UsdImagingGLEngine::SetColorCorrectionSettings(
-    TfToken const& id,
-    GfVec2i const& framebufferResolution)
+    TfToken const& id)
 {
     if (ARCH_UNLIKELY(_legacyImpl)) {
         return;
@@ -1020,16 +1150,14 @@ UsdImagingGLEngine::SetColorCorrectionSettings(
     TF_VERIFY(_taskController);
 
     HdxColorCorrectionTaskParams hdParams;
-    hdParams.framebufferSize = framebufferResolution;
     hdParams.colorCorrectionMode = id;
     _taskController->SetColorCorrectionParams(hdParams);
 }
 
-bool 
+bool
 UsdImagingGLEngine::IsColorCorrectionCapable()
 {
-    return GlfContextCaps::GetInstance().floatingPointBuffersEnabled && 
-           IsHydraEnabled();
+    return true;
 }
 
 //----------------------------------------------------------------------------
@@ -1043,8 +1171,14 @@ UsdImagingGLEngine::GetRenderStats() const
         return VtDictionary();
     }
 
-    TF_VERIFY(_renderIndex);
-    return _renderIndex->GetRenderDelegate()->GetRenderStats();
+    TF_VERIFY(_renderDelegate);
+    return _renderDelegate->GetRenderStats();
+}
+
+Hgi*
+UsdImagingGLEngine::GetHgi()
+{
+    return _hgi.get();
 }
 
 //----------------------------------------------------------------------------
@@ -1058,7 +1192,7 @@ UsdImagingGLEngine::_GetRenderIndex() const
         return nullptr;
     }
 
-    return _renderIndex;
+    return _renderIndex.get();
 }
 
 void 
@@ -1069,10 +1203,10 @@ UsdImagingGLEngine::_Execute(const UsdImagingGLRenderParams &params,
         return;
     }
 
-    TF_VERIFY(_delegate);
+    TF_VERIFY(_sceneDelegate);
 
-    // User is responsible for initializing GL context and glew
-    bool isCoreProfileContext = GlfContextCaps::GetInstance().coreProfile;
+    // User is responsible for initializing GL context
+    const bool isCoreProfileContext = GlfContextCaps::GetInstance().coreProfile;
 
     GLF_GROUP_FUNCTION();
 
@@ -1090,25 +1224,15 @@ UsdImagingGLEngine::_Execute(const UsdImagingGLRenderParams &params,
     }
 
     // hydra orients all geometry during topological processing so that
-    // front faces have ccw winding. We disable culling because culling
-    // is handled by fragment shader discard.
+    // front faces have ccw winding.
     if (params.flipFrontFacing) {
         glFrontFace(GL_CW); // < State is pushed via GL_POLYGON_BIT
     } else {
         glFrontFace(GL_CCW); // < State is pushed via GL_POLYGON_BIT
     }
-    glDisable(GL_CULL_FACE);
 
     if (params.applyRenderState) {
         glDisable(GL_BLEND);
-    }
-
-    // note: to get benefit of alpha-to-coverage, the target framebuffer
-    // has to be a MSAA buffer.
-    if (params.enableIdRender) {
-        glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-    } else if (params.enableSampleAlphaToCoverage) {
-        glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE);
     }
 
     // for points width
@@ -1119,7 +1243,12 @@ UsdImagingGLEngine::_Execute(const UsdImagingGLRenderParams &params,
     //  * showGuides, showRender, showProxy
     //  * gammaCorrectColors
 
-    _engine.Execute(_renderIndex, &tasks);
+    {
+        // Release the GIL before calling into hydra, in case any hydra plugins
+        // call into python.
+        TF_PY_ALLOW_THREADS_IN_SCOPE();
+        _engine->Execute(_renderIndex.get(), &tasks);
+    }
 
     if (isCoreProfileContext) {
 
@@ -1135,9 +1264,7 @@ UsdImagingGLEngine::_Execute(const UsdImagingGLRenderParams &params,
 }
 
 bool 
-UsdImagingGLEngine::_CanPrepareBatch(
-    const UsdPrim& root, 
-    const UsdImagingGLRenderParams& params)
+UsdImagingGLEngine::_CanPrepare(const UsdPrim& root)
 {
     HD_TRACE_FUNCTION();
 
@@ -1192,24 +1319,21 @@ _GetRefineLevel(float c)
 }
 
 void
-UsdImagingGLEngine::_PreSetTime(const UsdPrim& root, 
-    const UsdImagingGLRenderParams& params)
+UsdImagingGLEngine::_PreSetTime(const UsdImagingGLRenderParams& params)
 {
     HD_TRACE_FUNCTION();
 
     // Set the fallback refine level, if this changes from the existing value,
     // all prim refine levels will be dirtied.
-    int refineLevel = _GetRefineLevel(params.complexity);
-    _delegate->SetRefineLevelFallback(refineLevel);
+    const int refineLevel = _GetRefineLevel(params.complexity);
+    _sceneDelegate->SetRefineLevelFallback(refineLevel);
 
     // Apply any queued up scene edits.
-    _delegate->ApplyPendingUpdates();
+    _sceneDelegate->ApplyPendingUpdates();
 }
 
 void
-UsdImagingGLEngine::_PostSetTime(
-    const UsdPrim& root, 
-    const UsdImagingGLRenderParams& params)
+UsdImagingGLEngine::_PostSetTime(const UsdImagingGLRenderParams& params)
 {
     HD_TRACE_FUNCTION();
 }
@@ -1229,7 +1353,7 @@ UsdImagingGLEngine::_UpdateHydraCollection(
 
     // choose repr
     HdReprSelector reprSelector = HdReprSelector(HdReprTokens->smoothHull);
-    bool refined = params.complexity > 1.0;
+    const bool refined = params.complexity > 1.0;
     
     if (params.drawMode == UsdImagingGLDrawMode::DRAW_POINTS) {
         reprSelector = HdReprSelector(HdReprTokens->points);
@@ -1253,7 +1377,7 @@ UsdImagingGLEngine::_UpdateHydraCollection(
     }
 
     // By default our main collection will be called geometry
-    TfToken colName = HdTokens->geometry;
+    const TfToken colName = HdTokens->geometry;
 
     // Check if the collection needs to be updated (so we can avoid the sort).
     SdfPathVector const& oldRoots = collection->GetRootPaths();
@@ -1339,6 +1463,7 @@ UsdImagingGLEngine::_MakeHydraUsdImagingGLRenderParams(
     }
 
     params.enableSceneMaterials = renderParams.enableSceneMaterials;
+    params.enableSceneLights = renderParams.enableSceneLights;
 
     // We don't provide the following because task controller ignores them:
     // - params.camera
@@ -1368,42 +1493,11 @@ UsdImagingGLEngine::_ComputeRenderTags(UsdImagingGLRenderParams const& params,
     }
 }
 
-void
-UsdImagingGLEngine::_DeleteHydraResources()
-{
-    // Unwinding order: remove data sources first (task controller, scene
-    // delegate); then render index; then render delegate; finally the
-    // renderer plugin used to manage the render delegate.
-    
-    if (_taskController != nullptr) {
-        delete _taskController;
-        _taskController = nullptr;
-    }
-    if (_delegate != nullptr) {
-        delete _delegate;
-        _delegate = nullptr;
-    }
-    HdRenderDelegate *renderDelegate = nullptr;
-    if (_renderIndex != nullptr) {
-        renderDelegate = _renderIndex->GetRenderDelegate();
-        delete _renderIndex;
-        _renderIndex = nullptr;
-    }
-    if (_rendererPlugin != nullptr) {
-        if (renderDelegate != nullptr) {
-            _rendererPlugin->DeleteRenderDelegate(renderDelegate);
-        }
-        HdRendererPluginRegistry::GetInstance().ReleasePlugin(_rendererPlugin);
-        _rendererPlugin = nullptr;
-        _rendererId = TfToken();
-    }
-}
-
 /* static */
 TfToken
 UsdImagingGLEngine::_GetDefaultRendererPluginId()
 {
-    std::string defaultRendererDisplayName = 
+    static const std::string defaultRendererDisplayName = 
         TfGetenv("HD_DEFAULT_RENDERER", "");
 
     if (defaultRendererDisplayName.empty()) {
@@ -1424,6 +1518,30 @@ UsdImagingGLEngine::_GetDefaultRendererPluginId()
             defaultRendererDisplayName.c_str());
 
     return TfToken();
+}
+
+UsdImagingDelegate *
+UsdImagingGLEngine::_GetSceneDelegate() const
+{
+    return _sceneDelegate.get();
+}
+
+HdEngine *
+UsdImagingGLEngine::_GetHdEngine()
+{
+    return _engine.get();
+}
+
+HdxTaskController *
+UsdImagingGLEngine::_GetTaskController() const
+{
+    return _taskController.get();
+}
+
+bool
+UsdImagingGLEngine::_IsUsingLegacyImpl() const
+{
+    return bool(_legacyImpl);
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

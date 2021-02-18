@@ -27,7 +27,7 @@
 #include "pxr/pxr.h"
 #include "pxr/imaging/hdSt/api.h"
 #include "pxr/imaging/hd/renderPassState.h"
-#include "pxr/imaging/hgi/graphicsEncoderDesc.h"
+#include "pxr/imaging/hgi/graphicsCmdsDesc.h"
 
 #include <memory>
 
@@ -38,13 +38,14 @@ using HdStRenderPassStateSharedPtr = std::shared_ptr<class HdStRenderPassState>;
 
 using HdBufferArrayRangeSharedPtr = std::shared_ptr<class HdBufferArrayRange>;
 
-typedef boost::shared_ptr<class HdStShaderCode> HdStShaderCodeSharedPtr;
-typedef boost::shared_ptr<class HdStLightingShader> HdStLightingShaderSharedPtr;
-typedef boost::shared_ptr<class HdStRenderPassShader>
-                HdStRenderPassShaderSharedPtr;
-typedef boost::shared_ptr<class HdSt_FallbackLightingShader>
-                HdSt_FallbackLightingShaderSharedPtr;
-typedef std::vector<HdStShaderCodeSharedPtr> HdStShaderCodeSharedPtrVector;
+using HdStShaderCodeSharedPtr = std::shared_ptr<class HdStShaderCode>;
+using HdStLightingShaderSharedPtr = std::shared_ptr<class HdStLightingShader>;
+using HdStRenderPassShaderSharedPtr =
+    std::shared_ptr<class HdStRenderPassShader>;
+using HdSt_FallbackLightingShaderSharedPtr =
+    std::shared_ptr<class HdSt_FallbackLightingShader>;
+using HdStShaderCodeSharedPtrVector = std::vector<HdStShaderCodeSharedPtr>;
+class HdRenderIndex;
 
 /// \class HdStRenderPassState
 ///
@@ -52,36 +53,52 @@ typedef std::vector<HdStShaderCodeSharedPtr> HdStShaderCodeSharedPtrVector;
 ///
 /// Parameters are expressed as GL states, uniforms or shaders.
 ///
-class HdStRenderPassState : public HdRenderPassState {
+class HdStRenderPassState : public HdRenderPassState
+{
 public:
     HDST_API
     HdStRenderPassState();
     HDST_API
     HdStRenderPassState(HdStRenderPassShaderSharedPtr const &shader);
     HDST_API
-    virtual ~HdStRenderPassState();
+    ~HdStRenderPassState() override;
 
     HDST_API
-    virtual void
+    void
     Prepare(HdResourceRegistrySharedPtr const &resourceRegistry) override;
 
     /// Apply the GL states.
     /// Following states may be changed and restored to
     /// the GL default at Unbind().
+    ///   glEnable(GL_BLEND);
+    ///   glEnable(GL_CULL_FACE);
     ///   glEnable(GL_POLYGON_OFFSET_FILL)
-    ///   glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE)
     ///   glEnable(GL_PROGRAM_POINT_SIZE);
+    ///   glEnable(GL_SAMPLE_ALPHA_TO_COVERAGE)
     ///   glEnable(GL_STENCIL_TEST);
     ///   glPolygonOffset()
+    ///   glBlend*()
+    ///   glColorMask()
+    ///   glCullFace()
     ///   glDepthFunc()
+    ///   glDepthMask()
+    ///   glLineWidth()
     ///   glStencilFunc()
     ///   glStencilOp()
-    ///   glLineWidth()
     HDST_API
-    virtual void Bind() override;
+    void Bind() override;
 
     HDST_API
-    virtual void Unbind() override;
+    void Unbind() override;
+
+    /// If set to true (default) and the render pass is rendering into a
+    /// multi-sampled aovs, the aovs will be resolved at the end of the render
+    /// pass. If false or the aov is not multi-sampled or the render pass is not
+    /// rendering into the multi-sampled aov, no resolution takes place.
+    HD_API
+    void SetResolveAovMultiSample(bool state);
+    HD_API
+    bool GetResolveAovMultiSample() const;
 
     /// Set lighting shader
     HDST_API
@@ -111,8 +128,21 @@ public:
     HDST_API
     size_t GetShaderHash() const;
 
-    // Helper to convert AOV bindings to HgiGraphicsEncoder descriptor
-    HgiGraphicsEncoderDesc MakeGraphicsEncoderDesc() const;
+    /// Camera setter API
+    /// Option 1: Specify matrices, viewport and clipping planes (defined in
+    /// camera space) directly.
+    HD_API
+    void SetCameraFramingState(GfMatrix4d const &worldToViewMatrix,
+                               GfMatrix4d const &projectionMatrix,
+                               GfVec4d const &viewport,
+                               ClipPlanesVector const & clipPlanes);
+    
+    // Helper to get graphics cmds descriptor describing textures
+    // we render into and the blend state, constructed from
+    // AOV bindings.
+    //
+    HDST_API
+    HgiGraphicsCmdsDesc MakeGraphicsCmdsDesc(const HdRenderIndex *) const;
 
 private:
     bool _UseAlphaMask() const;
@@ -128,6 +158,7 @@ private:
     HdBufferArrayRangeSharedPtr _renderPassStateBar;
     size_t _clipPlanesBufferSize;
     float _alphaThresholdCurrent;
+    bool _resolveMultiSampleAov;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

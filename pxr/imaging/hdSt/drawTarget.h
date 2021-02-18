@@ -27,41 +27,31 @@
 #include "pxr/pxr.h"
 #include "pxr/imaging/hdSt/api.h"
 #include "pxr/imaging/hdSt/drawTargetRenderPassState.h"
-#include "pxr/imaging/hdSt/textureResourceHandle.h"
-#include "pxr/imaging/hd/enums.h"
 #include "pxr/imaging/hd/rprimCollection.h"
 #include "pxr/imaging/hd/sprim.h"
-#include "pxr/imaging/glf/drawTarget.h"
 
 #include "pxr/usd/sdf/path.h"
 #include "pxr/base/tf/staticTokens.h"
 
-#include <memory>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
 
-#define HDST_DRAW_TARGET_TOKENS                  \
-    (attachments)                               \
+#define HDST_DRAW_TARGET_TOKENS                 \
     (camera)                                    \
     (collection)                                \
-    (depthClearValue)                           \
     (drawTargetSet)                             \
     (enable)                                    \
-    (resolution)
+    (resolution)                                \
+    (aovBindings)                               \
+    (depthPriority)
 
 TF_DECLARE_PUBLIC_TOKENS(HdStDrawTargetTokens, HDST_API, HDST_DRAW_TARGET_TOKENS);
 
-class HdSceneDelegate;
-class HdRenderIndex;
 class HdCamera;
-class HdStDrawTargetAttachmentDescArray;
-
-
-typedef std::shared_ptr<class GlfGLContext> GlfGLContextSharedPtr;
-
-typedef std::vector<class HdStDrawTarget const *> HdStDrawTargetPtrConstVector;
+class HdRenderIndex;
+using HdStDrawTargetPtrVector = std::vector<class HdStDrawTarget *>;
 
 /// \class HdStDrawTarget
 ///
@@ -70,104 +60,80 @@ typedef std::vector<class HdStDrawTarget const *> HdStDrawTargetPtrConstVector;
 /// \note This is a temporary API to aid transition to Storm, and is subject
 /// to major changes.
 ///
-class HdStDrawTarget : public HdSprim {
+class HdStDrawTarget : public HdSprim
+{
 public:
     HDST_API
     HdStDrawTarget(SdfPath const & id);
     HDST_API
-    virtual ~HdStDrawTarget();
+    ~HdStDrawTarget() override;
 
     /// Dirty bits for the HdStDrawTarget object
+    ///
+    /// When GetUseStormTextureSystem() is true, "Legacy" dirty
+    /// bits are ignored.
+    ///
     enum DirtyBits : HdDirtyBits {
         Clean                   = 0,
         DirtyDTEnable           = 1 <<  0,
         DirtyDTCamera           = 1 <<  1,
         DirtyDTResolution       = 1 <<  2,
-        DirtyDTAttachment       = 1 <<  3,
-        DirtyDTDepthClearValue  = 1 <<  4,
-        DirtyDTCollection       = 1 <<  5,
+        DirtyDTAovBindings      = 1 <<  4,
+        DirtyDTDepthPriority    = 1 <<  6,
+        DirtyDTCollection       = 1 <<  7,
         AllDirty                = (DirtyDTEnable
                                    |DirtyDTCamera
                                    |DirtyDTResolution
-                                   |DirtyDTAttachment
-                                   |DirtyDTDepthClearValue
+                                   |DirtyDTAovBindings
+                                   |DirtyDTDepthPriority
                                    |DirtyDTCollection)
     };
 
-    /// Returns the version of the under-lying GlfDrawTarget.
-    /// The version changes if the draw target attachments texture ids
-    /// are changed in anyway (for example switching to a new
-    /// GlfDrawTarget object or resize the resources).
-    /// The version does not increment if only the contents of the
-    /// texture resources change
-    unsigned int GetVersion() const { return _version; }
-
     /// Synchronizes state from the delegate to this object.
     HDST_API
-    virtual void Sync(HdSceneDelegate *sceneDelegate,
-                      HdRenderParam   *renderParam,
-                      HdDirtyBits     *dirtyBits) override;
-
+    void Sync(HdSceneDelegate *sceneDelegate,
+              HdRenderParam   *renderParam,
+              HdDirtyBits     *dirtyBits) override;
+    
     /// Returns the minimal set of dirty bits to place in the
     /// change tracker for use in the first sync of this prim.
     /// Typically this would be all dirty bits.
     HDST_API
-    virtual HdDirtyBits GetInitialDirtyBitsMask() const override;
+    HdDirtyBits GetInitialDirtyBitsMask() const override;
 
 
     // ---------------------------------------------------------------------- //
     /// \name Draw Target API
     // ---------------------------------------------------------------------- //
     bool                       IsEnabled()        const { return  _enabled;    }
-    const GlfDrawTargetRefPtr &GetGlfDrawTarget() const { return  _drawTarget; }
-    const HdStDrawTargetRenderPassState *GetRenderPassState() const
+    const HdStDrawTargetRenderPassState *GetDrawTargetRenderPassState() const
     {
-        return &_renderPassState;
+        return &_drawTargetRenderPassState;
     }
 
     /// Returns collection of rprims the draw target draws.
     HDST_API
     HdRprimCollection const &GetCollection() const { return _collection; }
 
-    /// Debug api to output the contents of the draw target to a png file.
-    HDST_API
-    bool WriteToFile(const HdRenderIndex &renderIndex,
-                     const std::string &attachment,
-                     const std::string &path) const;
-
     /// returns all HdStDrawTargets in the render index
     HDST_API
     static void GetDrawTargets(HdRenderIndex* renderIndex,
-                               HdStDrawTargetPtrConstVector *drawTargets);
+                               HdStDrawTargetPtrVector *drawTargets);
 
+    /// Resolution.
+    ///
+    /// Set during sync.
+    ///
+    const GfVec2i &GetResolution() const {
+        return _resolution;
+    }
 
 private:
-    unsigned int     _version;
-
     bool                    _enabled;
-    SdfPath                 _cameraId;
     GfVec2i                 _resolution;
     HdRprimCollection       _collection;
 
-    HdStDrawTargetRenderPassState _renderPassState;
-    std::vector<HdStTextureResourceHandleSharedPtr> _colorTextureResourceHandles;
-    HdStTextureResourceHandleSharedPtr              _depthTextureResourceHandle;
-
-    /// The context which owns the draw target object.
-    GlfGLContextSharedPtr  _drawTargetContext;
-    GlfDrawTargetRefPtr    _drawTarget;
-
-    void _SetAttachments(HdSceneDelegate *sceneDelegate,
-                         const HdStDrawTargetAttachmentDescArray &attachments);
-
-    void _SetCamera(const SdfPath &cameraPath);
-
-    const HdCamera *_GetCamera(const HdRenderIndex &renderIndex) const;
-
-    void _ResizeDrawTarget();
-    void _RegisterTextureResourceHandle(HdSceneDelegate *sceneDelegate,
-                                  const std::string &name,
-                                  HdStTextureResourceHandleSharedPtr *handlePtr);
+    HdStDrawTargetRenderPassState _drawTargetRenderPassState;
 
     // No copy
     HdStDrawTarget()                                   = delete;

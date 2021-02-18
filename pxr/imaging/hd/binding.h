@@ -32,6 +32,8 @@
 #include "pxr/imaging/hd/bufferResource.h"
 #include "pxr/imaging/hd/bufferArrayRange.h"
 
+#include "pxr/base/tf/hash.h"
+
 PXR_NAMESPACE_OPEN_SCOPE
 
 
@@ -60,25 +62,30 @@ public:
                 BINDLESS_UNIFORM,    //
                 UNIFORM,             //
                 UNIFORM_ARRAY,       //
-                TBO,                 //
 
                 // shader parameter bindings
                 FALLBACK,             // fallback value
                 TEXTURE_2D,           // non-bindless uv texture
-                TEXTURE_3D,
+                TEXTURE_FIELD,        // non-bindless field texture
+                                      // creates accessor that samples uvw
+                                      // texture after transforming coordinates
+                                      // by a sampling transform
                 TEXTURE_UDIM_ARRAY,   // non-bindless udim texture array
                 TEXTURE_UDIM_LAYOUT,  // non-bindless udim layout
                 TEXTURE_PTEX_TEXEL,   // non-bindless ptex texels
                 TEXTURE_PTEX_LAYOUT,  // non-bindless ptex layout
                 BINDLESS_TEXTURE_2D,          // bindless uv texture
-                BINDLESS_TEXTURE_3D,
+                BINDLESS_TEXTURE_FIELD,       // bindless field texture
+                                              // (see above)
                 BINDLESS_TEXTURE_UDIM_ARRAY,  // bindless uv texture array
                 BINDLESS_TEXTURE_UDIM_LAYOUT, // bindless udim layout
                 BINDLESS_TEXTURE_PTEX_TEXEL,  // bindless ptex texels
                 BINDLESS_TEXTURE_PTEX_LAYOUT, // bindless ptex layout
                 PRIMVAR_REDIRECT,    // primvar redirection
-                FIELD_REDIRECT  // accesses 3d texture with potential
-                                // transform and fallback under different name
+                FIELD_REDIRECT, // accesses a field texture by name and
+                                // uses fallbackValue if no accessor for
+                                // the texture exists.
+                TRANSFORM_2D    // transform2d          
     };
     enum Location {
                 // NOT_EXIST is a special value of location for a uniform
@@ -247,6 +254,15 @@ public:
     /// affect hash, but changing the BAR pointer will.
     HD_API
     size_t ComputeHash() const;
+
+    // TfHash support.
+    template <class HashState>
+    friend void TfHashAppend(HashState &h, HdBindingRequest const &br) {
+        h.Append(br._name,
+                 br._bindingType,
+                 br._dataType,
+                 br._isInterleaved);
+    }
 
 private:
     // This class unfortunately represents several concepts packed into a single

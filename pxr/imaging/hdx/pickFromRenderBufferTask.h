@@ -26,7 +26,7 @@
 
 #include "pxr/pxr.h"
 #include "pxr/imaging/hdx/api.h"
-#include "pxr/imaging/hdx/progressiveTask.h"
+#include "pxr/imaging/hdx/task.h"
 
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/renderBuffer.h"
@@ -42,20 +42,30 @@ struct HdxPickFromRenderBufferTaskParams
         : primIdBufferPath()
         , instanceIdBufferPath()
         , elementIdBufferPath()
+        , normalBufferPath()
         , depthBufferPath()
         , cameraId()
+        , overrideWindowPolicy{false, CameraUtilFit}
         , viewport()
     {}
 
     SdfPath primIdBufferPath;
     SdfPath instanceIdBufferPath;
     SdfPath elementIdBufferPath;
+    SdfPath normalBufferPath;
     SdfPath depthBufferPath;
 
     // The id of the camera used to generate the id buffers.
     SdfPath cameraId;
 
+    // The framing specifying how the camera frustum in mapped into the
+    // render buffers.
+    CameraUtilFraming framing;
+    // Is application overriding the window policy of the camera.
+    std::pair<bool, CameraUtilConformWindowPolicy> overrideWindowPolicy;
+
     // The viewport of the camera used to generate the id buffers.
+    // Only used if framing is invalid - for legacy clients.
     GfVec4d viewport;
 };
 
@@ -66,7 +76,7 @@ struct HdxPickFromRenderBufferTaskParams
 /// to the camera frustum used to generate the ID buffers.  It then runs the
 /// pick query against the subset of the ID buffers contained by the pick
 /// frustum.
-class HdxPickFromRenderBufferTask : public HdxProgressiveTask
+class HdxPickFromRenderBufferTask : public HdxTask
 {
 public:
     HDX_API
@@ -78,12 +88,6 @@ public:
     /// Hooks for progressive rendering.
     virtual bool IsConverged() const override;
 
-    /// Sync the render pass resources
-    HDX_API
-    virtual void Sync(HdSceneDelegate* delegate,
-                      HdTaskContext* ctx,
-                      HdDirtyBits* dirtyBits) override;
-
     /// Prepare the pick task
     HDX_API
     virtual void Prepare(HdTaskContext* ctx,
@@ -93,7 +97,16 @@ public:
     HDX_API
     virtual void Execute(HdTaskContext* ctx) override;
 
+protected:
+    /// Sync the render pass resources
+    HDX_API
+    virtual void _Sync(HdSceneDelegate* delegate,
+                       HdTaskContext* ctx,
+                       HdDirtyBits* dirtyBits) override;
+
 private:
+    GfMatrix4d _ComputeProjectionMatrix() const;
+
     HdxPickFromRenderBufferTaskParams _params;
     HdxPickTaskContextParams _contextParams;
     // We need to cache a pointer to the render index so Execute() can
@@ -103,6 +116,7 @@ private:
     HdRenderBuffer *_primId;
     HdRenderBuffer *_instanceId;
     HdRenderBuffer *_elementId;
+    HdRenderBuffer *_normal;
     HdRenderBuffer *_depth;
     const HdCamera *_camera;
 

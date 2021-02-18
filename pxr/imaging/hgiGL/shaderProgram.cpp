@@ -21,12 +21,13 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include <GL/glew.h>
-#include "pxr/base/tf/diagnostic.h"
+#include "pxr/imaging/garch/glApi.h"
 
 #include "pxr/imaging/hgiGL/diagnostic.h"
 #include "pxr/imaging/hgiGL/shaderProgram.h"
 #include "pxr/imaging/hgiGL/shaderFunction.h"
+
+#include "pxr/base/tf/diagnostic.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -34,9 +35,15 @@ PXR_NAMESPACE_OPEN_SCOPE
 HgiGLShaderProgram::HgiGLShaderProgram(HgiShaderProgramDesc const& desc)
     : HgiShaderProgram(desc)
     , _programId(0)
+    , _programByteSize(0)
+    , _uniformBuffer(0)
+    , _uboByteSize(0)
 {
     _programId = glCreateProgram();
-    glObjectLabel(GL_PROGRAM, _programId, -1, _descriptor.debugName.c_str());
+
+    if (!_descriptor.debugName.empty()) {
+        HgiGLObjectLabel(GL_PROGRAM, _programId, _descriptor.debugName);
+    }
 
     for (HgiShaderFunctionHandle const& shd : desc.shaderFunctions) {
         HgiGLShaderFunction* glShader = 
@@ -57,7 +64,13 @@ HgiGLShaderProgram::HgiGLShaderProgram(HgiShaderProgramDesc const& desc)
         glGetProgramInfoLog(_programId, logSize, nullptr, &_errors[0]);
         glDeleteProgram(_programId);
         _programId = 0;
+    } else {
+        GLint size;
+        glGetProgramiv(_programId, GL_PROGRAM_BINARY_LENGTH, &size);
+        _programByteSize = (size_t)size;
     }
+
+    glCreateBuffers(1, &_uniformBuffer);
 
     HGIGL_POST_PENDING_GL_ERRORS();
 }
@@ -66,6 +79,8 @@ HgiGLShaderProgram::~HgiGLShaderProgram()
 {
     glDeleteProgram(_programId);
     _programId = 0;
+    glDeleteBuffers(1, &_uniformBuffer);
+    _uniformBuffer = 0;
     HGIGL_POST_PENDING_GL_ERRORS();
 }
 
@@ -87,10 +102,29 @@ HgiGLShaderProgram::GetCompileErrors()
     return _errors;
 }
 
+size_t
+HgiGLShaderProgram::GetByteSizeOfResource() const
+{
+    return _programByteSize + _uboByteSize;
+}
+
+uint64_t
+HgiGLShaderProgram::GetRawResource() const
+{
+    return (uint64_t) _programId;
+}
+
 uint32_t
 HgiGLShaderProgram::GetProgramId() const
 {
     return _programId;
+}
+
+uint32_t
+HgiGLShaderProgram::GetUniformBuffer(size_t sizeHint)
+{
+    _uboByteSize = sizeHint;
+    return _uniformBuffer;
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

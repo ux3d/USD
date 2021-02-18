@@ -43,44 +43,24 @@
 
 -- glsl Fullscreen.Vertex
 
-#version 120
-
-attribute vec4 position;
-attribute vec2 uvIn;
-
-varying vec2 uv;
-
 void main(void)
 {
     gl_Position = position;
-    uv = uvIn;
+    uvOut = uvIn;
 }
 
 -- glsl Composite.FragmentNoDepth
 
-#version 120
-
-varying vec2 uv;
-
-uniform sampler2D color;
-
 void main(void)
 {
-    gl_FragColor = texture2D(color, uv);
+    hd_FragColor = vec4(HdGet_colorIn(hd_Position));
 }
 
 -- glsl Composite.FragmentWithDepth
 
-#version 120
-
-varying vec2 uv;
-
-uniform sampler2D color;
-uniform sampler2D depth;
-
 void main(void)
 {
-    float depth = texture2D(depth, uv).r;
-    gl_FragColor = texture2D(color, uv);
-    gl_FragDepth = depth;
+    float depth = HdGet_depth(hd_Position);
+    hd_FragColor = vec4(HdGet_colorIn(hd_Position));
+    hd_FragDepth = depth;
 }

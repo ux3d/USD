@@ -48,19 +48,14 @@ namespace {
 // fwd decl.
 WRAP_CUSTOM;
 
-        
-static UsdAttribute
-_CreateImplementationSourceAttr(UsdShadeShader &self,
-                                      object defaultVal, bool writeSparsely) {
-    return self.CreateImplementationSourceAttr(
-        UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Token), writeSparsely);
-}
-        
-static UsdAttribute
-_CreateIdAttr(UsdShadeShader &self,
-                                      object defaultVal, bool writeSparsely) {
-    return self.CreateIdAttr(
-        UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Token), writeSparsely);
+
+static std::string
+_Repr(const UsdShadeShader &self)
+{
+    std::string primRepr = TfPyRepr(self.GetPrim());
+    return TfStringPrintf(
+        "UsdShade.Shader(%s)",
+        primRepr.c_str());
 }
 
 } // anonymous namespace
@@ -95,21 +90,8 @@ void wrapUsdShadeShader()
 
         .def(!self)
 
-        
-        .def("GetImplementationSourceAttr",
-             &This::GetImplementationSourceAttr)
-        .def("CreateImplementationSourceAttr",
-             &_CreateImplementationSourceAttr,
-             (arg("defaultValue")=object(),
-              arg("writeSparsely")=false))
-        
-        .def("GetIdAttr",
-             &This::GetIdAttr)
-        .def("CreateIdAttr",
-             &_CreateIdAttr,
-             (arg("defaultValue")=object(),
-              arg("writeSparsely")=false))
 
+        .def("__repr__", ::_Repr)
     ;
 
     _CustomWrapCode(cls);
@@ -138,6 +120,21 @@ void wrapUsdShadeShader()
 #include <boost/python/return_internal_reference.hpp>
 
 namespace {
+
+static UsdAttribute
+_CreateImplementationSourceAttr(UsdShadeShader &self,
+                                      object defaultVal, bool writeSparsely) {
+    return self.CreateImplementationSourceAttr(
+        UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Token), writeSparsely);
+}
+        
+static UsdAttribute
+_CreateIdAttr(UsdShadeShader &self,
+                                      object defaultVal, bool writeSparsely) {
+    return self.CreateIdAttr(
+        UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Token), writeSparsely);
+}
+
 
 static object 
 _WrapGetShaderId(const UsdShadeShader &shader)
@@ -187,6 +184,20 @@ WRAP_CUSTOM {
         .def(init<UsdShadeConnectableAPI>(arg("connectable")))
 
         .def("ConnectableAPI", &UsdShadeShader::ConnectableAPI)
+
+        .def("GetImplementationSourceAttr",
+             &UsdShadeShader::GetImplementationSourceAttr)
+        .def("CreateImplementationSourceAttr",
+             &_CreateImplementationSourceAttr,
+             (arg("defaultValue")=object(),
+              arg("writeSparsely")=false))
+        
+        .def("GetIdAttr",
+             &UsdShadeShader::GetIdAttr)
+        .def("CreateIdAttr",
+             &_CreateIdAttr,
+             (arg("defaultValue")=object(),
+              arg("writeSparsely")=false))
 
         .def("GetImplementationSource", &UsdShadeShader::GetImplementationSource)
 

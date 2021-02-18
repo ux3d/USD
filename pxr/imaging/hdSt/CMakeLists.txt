@@ -1,9 +1,11 @@
 set(PXR_PREFIX pxr/imaging)
 set(PXR_PACKAGE hdSt)
 
-if (NOT ${PXR_ENABLE_GL_SUPPORT})
+# XXX We tmp check for PXR_ENABLE_GL_SUPPORT since Storm currently still only
+# runs on OpenGL. Once Storm uses only Hgi, remove GL_SUPPORT check.
+if (NOT ${PXR_BUILD_GPU_SUPPORT} OR NOT ${PXR_ENABLE_GL_SUPPORT})
     message(STATUS
-        "Skipping ${PXR_PACKAGE} because PXR_ENABLE_GL_SUPPORT is OFF")
+        "Skipping ${PXR_PACKAGE} because PXR_BUILD_GPU_SUPPORT is OFF")
     return()
 endif()
 
@@ -12,6 +14,27 @@ if (OPENSUBDIV_HAS_GLSL_TRANSFORM_FEEDBACK)
 endif()
 if (OPENSUBDIV_HAS_GLSL_COMPUTE)
     add_definitions(-DOPENSUBDIV_HAS_GLSL_COMPUTE)
+endif()
+
+set(optionalLibs "")
+set(optionalIncludeDirs "")
+set(optionalPublicClasses "")
+set(optionalPrivateClasses "")
+if (${PXR_ENABLE_MATERIALX_IMAGING_SUPPORT})
+    add_definitions(-DPXR_MATERIALX_STDLIB_DIR="${MATERIALX_STDLIB_DIR}")
+    add_definitions(-DPXR_MATERIALX_RESOURCE_DIR="${MATERIALX_RESOURCE_DIR}")
+
+    list(APPEND optionalLibs ${MATERIALX_LIBRARIES})
+    list(APPEND optionalIncludeDirs ${MATERIALX_INCLUDE_DIRS})
+    list(APPEND optionalPrivateClasses
+         materialXFilter
+         materialXShaderGen
+    )
+endif()
+if (PXR_ENABLE_PTEX_SUPPORT)
+    list(APPEND optionalLibs ${PTEX_LIBRARY})
+    list(APPEND optionalIncludeDirs ${PTEX_INCLUDE_DIR})
+    list(APPEND optionalPublicClasses ptexMipmapTextureLoader)
 endif()
 
 pxr_library(hdSt
@@ -24,19 +47,18 @@ pxr_library(hdSt
         sdr
         tf
         trace
-        ${GLEW_LIBRARY}
         ${OPENSUBDIV_LIBRARIES}
+        ${optionalLibs}
 
     INCLUDE_DIRS
-        ${GLEW_INCLUDE_DIR}
         ${OPENSUBDIV_INCLUDE_DIR}
+        ${optionalIncludeDirs}
 
     PUBLIC_CLASSES
         basisCurves
-        bufferArrayRangeGL
-        bufferResourceGL
+        bufferArrayRange
+        bufferResource
         commandBuffer
-        computeShader
         copyComputation
         debugCodes
         dispatchBuffer
@@ -44,9 +66,8 @@ pxr_library(hdSt
         drawItem
         drawItemInstance
         drawTarget
-        drawTargetAttachmentDesc
-        drawTargetAttachmentDescArray
         drawTargetRenderPassState
+        dynamicUvTextureObject
         extComputation
         extCompGpuComputation
         extCompGpuComputationBufferSource
@@ -54,10 +75,11 @@ pxr_library(hdSt
         extCompGpuPrimvarBufferSource
         fallbackLightingShader
         field
-        fieldResource
+        fieldSubtextureIdentifier
         flatNormals
         geometricShader
         glConversions
+        glfTextureCpuData
         glslfxShader
         glslProgram
         glUtils
@@ -72,44 +94,54 @@ pxr_library(hdSt
         mesh
         mixinShader
         package
-        persistentBuffer
         points
+        ptexTextureObject
         renderBuffer
         renderDelegate
         renderPass
         renderPassShader
         renderPassState
-        resourceGL
         resourceRegistry
         rprimUtils
+        samplerObject
+        samplerObjectRegistry
         shaderCode
         simpleLightingShader
         smoothNormals
+        subtextureIdentifier
         surfaceShader
         texture
-        textureResource
-        textureResourceHandle
+        textureBinder
+        textureCpuData
+        textureHandle
+        textureHandleRegistry
+        textureIdentifier
+        textureObject
+        textureObjectRegistry
         tokens
+        udimTextureObject
         unitTestGLDrawing
         vboMemoryManager
         vboSimpleMemoryManager
         volume
+        ${optionalPublicClasses}
 
     PUBLIC_HEADERS
         api.h
+        dynamicUvTextureImplementation.h
 
     PRIVATE_CLASSES
+        assetUvTextureCpuData
         basisCurvesComputations
         basisCurvesShaderKey
         basisCurvesTopology
         codeGen
         cullingShaderKey
         drawBatch
-        drawTargetTextureResource
+        extCompComputeShader
         imageShaderShaderKey
         immediateDrawBatch
         indirectDrawBatch
-        materialBufferSourceAndTextureHelper
         materialParam
         meshShaderKey
         meshTopology 
@@ -119,11 +151,12 @@ pxr_library(hdSt
         shaderKey
         subdivision
         subdivision3
+        textureUtils
         triangulate
-        unitTestDelegate
         unitTestHelper
         volumeShader
         volumeShaderKey
+        ${optionalPrivateClasses}
 
     RESOURCE_FILES
         plugInfo.json
@@ -141,6 +174,7 @@ pxr_library(hdSt
         shaders/lighting.glslfx
         shaders/lightingIntegrationShader.glslfx
         shaders/mesh.glslfx
+        shaders/meshFaceCull.glslfx
         shaders/meshNormal.glslfx
         shaders/meshWire.glslfx
         shaders/points.glslfx
@@ -152,6 +186,9 @@ pxr_library(hdSt
         shaders/terminals.glslfx
         shaders/visibility.glslfx
         shaders/volume.glslfx
+
+    DOXYGEN_FILES
+        overview.dox
 )
 
 if (X11_FOUND OR APPLE)

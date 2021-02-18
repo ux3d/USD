@@ -28,12 +28,12 @@
 
 #include "pxr/imaging/hd/renderThread.h"
 #include "pxr/imaging/hd/renderPassState.h"
-#include "pxr/imaging/hd/tokens.h"
 
 #include "pxr/base/gf/matrix4d.h"
+#include "pxr/base/gf/rect2i.h"
 
-#include <embree2/rtcore.h>
-#include <embree2/rtcore_ray.h>
+#include <embree3/rtcore.h>
+#include <embree3/rtcore_ray.h>
 
 #include <random>
 #include <atomic>
@@ -63,10 +63,9 @@ public:
     ///   \param scene The embree scene to use.
     void SetScene(RTCScene scene);
 
-    /// Specify a new viewport size for the sample/color buffer.
-    ///   \param width The new viewport width.
-    ///   \param height The new viewport height.
-    void SetViewport(unsigned int width, unsigned int height);
+    /// Set the data window to fill (same meaning as in CameraUtilFraming
+    /// with coordinate system also being y-Down).
+    void SetDataWindow(const GfRect2i &dataWindow);
 
     /// Set the camera to use for rendering.
     ///   \param viewMatrix The camera's world-to-view matrix.
@@ -142,17 +141,17 @@ private:
                    std::default_random_engine &random);
 
     // Compute the color at the given ray hit.
-    GfVec4f _ComputeColor(RTCRay const& rayHit,
+    GfVec4f _ComputeColor(RTCRayHit const& rayHit,
                           std::default_random_engine &random,
                           GfVec4f const& clearColor);
     // Compute the depth at the given ray hit.
-    bool _ComputeDepth(RTCRay const& rayHit, float *depth, bool clip);
+    bool _ComputeDepth(RTCRayHit const& rayHit, float *depth, bool clip);
     // Compute the given ID at the given ray hit.
-    bool _ComputeId(RTCRay const& rayHit, TfToken const& idType, int32_t *id);
+    bool _ComputeId(RTCRayHit const& rayHit, TfToken const& idType, int32_t *id);
     // Compute the normal at the given ray hit.
-    bool _ComputeNormal(RTCRay const& rayHit, GfVec3f *normal, bool eye);
+    bool _ComputeNormal(RTCRayHit const& rayHit, GfVec3f *normal, bool eye);
     // Compute a primvar at the given ray hit.
-    bool _ComputePrimvar(RTCRay const& rayHit, TfToken const& primvar,
+    bool _ComputePrimvar(RTCRayHit const& rayHit, TfToken const& primvar,
         GfVec3f *value);
 
     // Compute the ambient occlusion term at a given point by firing rays
@@ -175,9 +174,12 @@ private:
     // Are the aov bindings valid?
     bool _aovBindingsValid;
 
-    // The width of the viewport we're rendering into.
+    // Data window - as in CameraUtilFraming.
+    GfRect2i _dataWindow;
+
+    // The width of the render buffers.
     unsigned int _width;
-    // The height of the viewport we're rendering into.
+    // The height of the render buffers.
     unsigned int _height;
 
     // View matrix: world space to camera space.

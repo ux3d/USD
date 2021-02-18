@@ -29,12 +29,18 @@
 #include "pxr/usd/plugin/usdMtlx/api.h"
 #include "pxr/usd/ndr/declare.h"
 #include "pxr/usd/sdf/valueTypeName.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/value.h"
 #include <MaterialXCore/Document.h>
 #include <string>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+#define USD_MTLX_TOKENS \
+    ((DefaultOutputName, "out"))
+
+TF_DECLARE_PUBLIC_TOKENS(UsdMtlxTokens, USDMTLX_LOCAL, USD_MTLX_TOKENS);
 
 /// Return the contents of a search path environment variable named
 /// \p name as a vector of strings.  The path is split on the platform's
@@ -99,9 +105,11 @@ struct UsdMtlxUsdTypeInfo {
     UsdMtlxUsdTypeInfo(
         SdfValueTypeName valueTypeName,
         bool valueTypeNameIsExact,
-        TfToken shaderPropertyType)
+        TfToken shaderPropertyType,
+        int arraySize=0)
         : valueTypeName(valueTypeName)
         , shaderPropertyType(shaderPropertyType)
+        , arraySize(arraySize)
         , valueTypeNameIsExact(valueTypeNameIsExact)
     { }
 
@@ -113,6 +121,10 @@ struct UsdMtlxUsdTypeInfo {
     /// The exact \c SdrShaderProperty type name.  If there is no exact
     /// match this is empty.
     TfToken shaderPropertyType;
+
+    /// If the value type is a fixed-size array/tuple, this will be greater
+    /// then zero.  For "dynamic arrays" this will be zero.
+    int arraySize;
 
     /// \c true iff the value type name is an exact match to the
     /// MaterialX type.

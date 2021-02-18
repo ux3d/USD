@@ -208,12 +208,12 @@ class TextureChecker(BaseRuleChecker):
         # non-trivial. We probably need to pre-analyze all the materials. 
         # Not going to try to do this yet, but it raises an interesting 
         # validation pattern -
+        from pxr import Sdf, UsdShade
 
         # Check if the prim is a shader. 
-        if prim.GetTypeName() != "Shader":
+        if not prim.IsA(UsdShade.Shader):
             return
 
-        from pxr import Sdf, UsdShade
         shader = UsdShade.Shader(prim)
         shaderInputs = shader.GetInputs()
         for ip in shaderInputs:
@@ -661,7 +661,7 @@ class ComplianceChecker(object):
         self._checkedPackages.add(packagePath)
 
         resolvedPath = Ar.GetResolver().Resolve(packagePath)
-        if len(resolvedPath) == 0:
+        if not resolvedPath:
             self._AddError("Failed to resolve package path '%s'." % packagePath)
             return
 

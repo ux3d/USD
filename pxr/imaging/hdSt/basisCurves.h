@@ -35,16 +35,13 @@
 #include "pxr/usd/sdf/path.h"
 #include "pxr/base/vt/array.h"
 
-#include <boost/shared_ptr.hpp>
-
 #include <memory>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
 class HdStDrawItem;
-using HdResourceRegistrySharedPtr = std::shared_ptr<class HdResourceRegistry>;
-typedef boost::shared_ptr<class HdSt_BasisCurvesTopology>
-                                              HdSt_BasisCurvesTopologySharedPtr;
+using HdSt_BasisCurvesTopologySharedPtr =
+    std::shared_ptr<class HdSt_BasisCurvesTopology>;
 
 /// \class HdStBasisCurves
 ///
@@ -76,8 +73,8 @@ public:
     HF_MALLOC_TAG_NEW("new HdStBasisCurves");
 
     HDST_API
-    HdStBasisCurves(SdfPath const& id,
-                    SdfPath const& instancerId = SdfPath());
+    HdStBasisCurves(SdfPath const& id);
+
     HDST_API
     virtual ~HdStBasisCurves();
 
@@ -110,6 +107,10 @@ protected:
     void _PopulateVertexPrimvars(HdSceneDelegate *sceneDelegate,
                                  HdStDrawItem *drawItem,
                                  HdDirtyBits *dirtyBits);
+    
+    void _PopulateVaryingPrimvars(HdSceneDelegate *sceneDelegate,
+                                  HdStDrawItem *drawItem,
+                                  HdDirtyBits *dirtyBits);
 
     void _PopulateElementPrimvars(HdSceneDelegate *sceneDelegate,
                                   HdStDrawItem *drawItem,
@@ -142,7 +143,7 @@ private:
     bool _SupportsUserNormals(HdStDrawItem* drawItem);
     
     const TfToken& _GetMaterialTag(const HdRenderIndex &renderIndex) const;
-
+    
     void _UpdateDrawItem(HdSceneDelegate *sceneDelegate,
                          HdStDrawItem *drawItem,
                          HdDirtyBits *dirtyBits,
@@ -161,6 +162,7 @@ private:
     HdTopology::ID _topologyId;
     HdDirtyBits _customDirtyBitsInUse;
     int _refineLevel;  // XXX: could be moved into HdBasisCurveTopology.
+    bool _displayOpacity;
 };
 
 

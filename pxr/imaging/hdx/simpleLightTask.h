@@ -38,8 +38,6 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/declarePtrs.h"
 
-#include <boost/shared_ptr.hpp>
-
 #include <memory>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -48,36 +46,37 @@ class HdRenderIndex;
 class HdSceneDelegate;
 
 using HdRenderPassSharedPtr = std::shared_ptr<class HdRenderPass>;
-typedef boost::shared_ptr<class HdStSimpleLightingShader> 
-    HdStSimpleLightingShaderSharedPtr;
-typedef boost::shared_ptr<class HdxShadowMatrixComputation> 
-    HdxShadowMatrixComputationSharedPtr;
+using HdStSimpleLightingShaderSharedPtr =
+    std::shared_ptr<class HdStSimpleLightingShader>;
+using HdxShadowMatrixComputationSharedPtr =
+    std::shared_ptr<class HdxShadowMatrixComputation>;
 
 TF_DECLARE_REF_PTRS(GlfSimpleShadowArray);
 
 
-class HdxSimpleLightTask : public HdTask {
+class HdxSimpleLightTask : public HdTask
+{
 public:
     HDX_API
     HdxSimpleLightTask(HdSceneDelegate* delegate, SdfPath const& id);
 
     HDX_API
-    virtual ~HdxSimpleLightTask();
+    ~HdxSimpleLightTask() override;
 
     /// Sync the render pass resources
     HDX_API
-    virtual void Sync(HdSceneDelegate* delegate,
-                      HdTaskContext* ctx,
-                      HdDirtyBits* dirtyBits) override;
+    void Sync(HdSceneDelegate* delegate,
+              HdTaskContext* ctx,
+              HdDirtyBits* dirtyBits) override;
 
     /// Prepare the tasks resources
     HDX_API
-    virtual void Prepare(HdTaskContext* ctx,
-                         HdRenderIndex* renderIndex) override;
+    void Prepare(HdTaskContext* ctx,
+                 HdRenderIndex* renderIndex) override;
 
     /// Execute render pass task
     HDX_API
-    virtual void Execute(HdTaskContext* ctx) override;
+    void Execute(HdTaskContext* ctx) override;
 
 private:
     SdfPath _cameraId;

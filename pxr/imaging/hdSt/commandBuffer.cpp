@@ -21,7 +21,6 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include "pxr/imaging/glf/glew.h"
 #include "pxr/imaging/glf/contextCaps.h"
 
 #include "pxr/imaging/hdSt/commandBuffer.h"
@@ -113,11 +112,6 @@ HdStCommandBuffer::ExecuteDraw(
         batch->ExecuteDraw(renderPassState, resourceRegistry);
     }
     HD_PERF_COUNTER_SET(HdPerfTokens->drawBatches, _drawBatches.size());
-
-    if (!glBindBuffer) {
-        // useful when testing with GL drawing disabled
-        HD_PERF_COUNTER_SET(HdTokens->itemsDrawn, _visibleSize);
-    }
 }
 
 void
@@ -136,6 +130,12 @@ HdStCommandBuffer::RebuildDrawBatchesIfNeeded(unsigned currentBatchVersion)
 
     bool deepValidation = (currentBatchVersion != _batchVersion);
     _batchVersion = currentBatchVersion;
+
+    if (TfDebug::IsEnabled(HDST_DRAW_BATCH) && !_drawBatches.empty()) {
+        TfDebug::Helper().Msg(
+            "Command buffer %p : RebuildDrawBatchesIfNeeded "
+            "(deepValidation=%d)\n", (void*)(this), deepValidation);
+    }
     
     // Force rebuild of all batches for debugging purposes. This helps quickly
     // triage issues wherein the command buffer wasn't updated correctly.
@@ -143,20 +143,39 @@ HdStCommandBuffer::RebuildDrawBatchesIfNeeded(unsigned currentBatchVersion)
         TfDebug::IsEnabled(HDST_FORCE_DRAW_BATCH_REBUILD);
 
     if (ARCH_LIKELY(!rebuildAllDrawBatches)) {
+        // Gather results of validation ...
+        std::vector<HdSt_DrawBatch::ValidationResult> results;
+        results.reserve(_drawBatches.size());
+
         for (auto const& batch : _drawBatches) {
-            // Validate checks if the batch is referring to up-to-date
-            // buffer arrays (via a cheap version number hash check).
-            // If deepValidation is set, we loop over the draw items to check
-            // if they can be aggregated. If these checks fail, we need to
-            // rebuild the batch.
-            bool needToRebuildBatch = !batch->Validate(deepValidation);
-            if (needToRebuildBatch) {
-                // Attempt to rebuild the batch. If that fails, we use a big
-                // hammer and rebuilt ALL batches.
-                bool rebuildSuccess = batch->Rebuild();
-                if (!rebuildSuccess) {
-                    rebuildAllDrawBatches = true;
-                    break;
+            const HdSt_DrawBatch::ValidationResult result =
+                batch->Validate(deepValidation);
+            
+            if (result == HdSt_DrawBatch::ValidationResult::RebuildAllBatches) {
+                // Skip validation of remaining batches since we need to rebuild
+                // all batches. We don't expect to use this hammer on a frequent
+                // basis.
+                rebuildAllDrawBatches = true;
+                break;
+            }
+            
+            results.push_back(result);
+        }
+
+        // ... and attempt to rebuild necessary batches
+        if (!rebuildAllDrawBatches) {
+            TF_VERIFY(results.size() == _drawBatches.size());
+            size_t const numBatches = results.size();
+            for (size_t i = 0; i < numBatches; i++) {
+                if (results[i] ==
+                    HdSt_DrawBatch::ValidationResult::RebuildBatch) {
+                    
+                    if (!_drawBatches[i]->Rebuild()) {
+                        // If a batch rebuild fails, we fallback to rebuilding
+                        // all draw batches. This can be improved in the future.
+                        rebuildAllDrawBatches = true;
+                        break;
+                    }
                 }
             }
         }
@@ -183,7 +202,7 @@ HdStCommandBuffer::_RebuildDrawBatches()
 
     HD_PERF_COUNTER_INCR(HdPerfTokens->rebuildBatches);
 
-    bool bindlessTexture = GlfContextCaps::GetInstance()
+    const bool bindlessTexture = GlfContextCaps::GetInstance()
                                                .bindlessTextureEnabled;
 
     // Use a cheap bucketing strategy to reduce to number of comparison tests
@@ -225,10 +244,15 @@ HdStCommandBuffer::_RebuildDrawBatches()
         boost::hash_combine(key, drawItem->GetBufferArraysHash());
         if (!bindlessTexture) {
             // Geometric, RenderPass and Lighting shaders should never break
-            // batches, however materials can. We consider the material 
-            // parameters to be part of the batch key here for that reason.
-            boost::hash_combine(key, HdSt_MaterialParam::ComputeHash(
-                            drawItem->GetMaterialShader()->GetParams()));
+            // batches, however materials can. We consider the textures
+            // used by the material to be part of the batch key for that
+            // reason.
+            // Since textures can be animated and thus materials can be batched
+            // at some times but not other times, we use the texture prim path
+            // for the hash which does not vary over time.
+            // 
+            boost::hash_combine(
+                key, drawItem->GetMaterialShader()->ComputeTextureSourceHash());
         }
 
         // Do a quick check to see if the draw item can be batched with the

@@ -133,6 +133,15 @@ _CreateCreaseSharpnessesAttr(UsdGeomMesh &self,
         UsdPythonToSdfType(defaultVal, SdfValueTypeNames->FloatArray), writeSparsely);
 }
 
+static std::string
+_Repr(const UsdGeomMesh &self)
+{
+    std::string primRepr = TfPyRepr(self.GetPrim());
+    return TfStringPrintf(
+        "UsdGeom.Mesh(%s)",
+        primRepr.c_str());
+}
+
 } // anonymous namespace
 
 void wrapUsdGeomMesh()
@@ -250,6 +259,7 @@ void wrapUsdGeomMesh()
              (arg("defaultValue")=object(),
               arg("writeSparsely")=false))
 
+        .def("__repr__", ::_Repr)
     ;
 
     _CustomWrapCode(cls);
@@ -298,6 +308,8 @@ WRAP_CUSTOM {
              (arg("faceVertexIndices"),
               arg("faceVertexCounts"),
               arg("numPoints")))
+        .def("GetFaceCount", &UsdGeomMesh::GetFaceCount,
+            arg("timeCode")=UsdTimeCode::Default()) 
         .staticmethod("ValidateTopology");
 
     _class.attr("SHARPNESS_INFINITE") = UsdGeomMesh::SHARPNESS_INFINITE;

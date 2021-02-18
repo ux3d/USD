@@ -21,9 +21,8 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include "pxr/pxr.h"
 
-#include "pxr/imaging/glf/glew.h"
+#include "pxr/imaging/garch/glApi.h"
 
 #include "pxr/imaging/glf/contextCaps.h"
 #include "pxr/imaging/glf/glContext.h"
@@ -96,7 +95,9 @@ private:
 
 static void CameraAndLightTest()
 {
-    std::unique_ptr<Hgi> hgi(Hgi::GetPlatformDefaultHgi());
+    // Hgi and HdDriver should be constructed before HdEngine to ensure they
+    // are destructed last. Hgi may be used during engine/delegate destruction.
+    HgiUniquePtr hgi = Hgi::CreatePlatformDefaultHgi();
     HdDriver driver{HgiTokens->renderDriver, VtValue(hgi.get())};
 
     HdStRenderDelegate renderDelegate;
@@ -177,7 +178,7 @@ int main()
 
     // Test uses ContextCaps, so need to create a GL instance.
     GlfTestGLContext::RegisterGLContextCallbacks();
-    GlfGlewInit();
+    GarchGLApiLoad();
     GlfSharedGLContextScopeHolder sharedContext;
     GlfContextCaps::InitInstance();
 

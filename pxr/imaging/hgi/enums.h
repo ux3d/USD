@@ -60,6 +60,10 @@ using HgiDeviceCapabilities = HgiBits;
 ///   A two-dimensional texture.</li>
 /// <li>HgiTextureType3D:
 ///   A three-dimensional texture.</li>
+/// <li>HgiTextureType1DArray:
+///   An array of one-dimensional textures.</li>
+/// <li>HgiTextureType2DArray:
+///   An array of two-dimensional textures.</li>
 /// </ul>
 ///
 enum HgiTextureType
@@ -67,6 +71,8 @@ enum HgiTextureType
     HgiTextureType1D = 0,
     HgiTextureType2D,
     HgiTextureType3D,
+    HgiTextureType1DArray,
+    HgiTextureType2DArray,
 
     HgiTextureTypeCount
 };
@@ -78,13 +84,17 @@ enum HgiTextureType
 ///
 /// <ul>
 /// <li>HgiTextureUsageBitsColorTarget:
-///   The texture is an color attachment rendered into via a render pass.</li>
+///   The texture is a color attachment rendered into via a render pass.</li>
 /// <li>HgiTextureUsageBitsDepthTarget:
-///   The texture is an depth attachment rendered into via a render pass.</li>
+///   The texture is a depth attachment rendered into via a render pass.</li>
+/// <li>HgiTextureUsageBitsStencilTarget:
+///   The texture is a stencil attachment rendered into via a render pass.</li>
 /// <li>HgiTextureUsageBitsShaderRead:
-///   The texture is sampled from in a shader (image load / sampling)</li>
+///   The texture is sampled from in a shader (sampling)</li>
 /// <li>HgiTextureUsageBitsShaderWrite:
-///   The texture is written into from in a shader (image store)</li>
+///   The texture is written into from in a shader (image store)
+///   When a texture is used as HgiBindResourceTypeStorageImage you must
+///   add this flag (even if you only read from the image).</li>
 ///
 /// <li>HgiTextureUsageCustomBitsBegin:
 ///   This bit (and any bit after) can be used to attached custom, backend
@@ -93,15 +103,72 @@ enum HgiTextureType
 ///
 enum HgiTextureUsageBits : HgiBits
 {
-    HgiTextureUsageBitsColorTarget = 1 << 0,
-    HgiTextureUsageBitsDepthTarget = 1 << 1,
-    HgiTextureUsageBitsShaderRead  = 1 << 2,
-    HgiTextureUsageBitsShaderWrite = 1 << 3,
+    HgiTextureUsageBitsColorTarget   = 1 << 0,
+    HgiTextureUsageBitsDepthTarget   = 1 << 1,
+    HgiTextureUsageBitsStencilTarget = 1 << 2,
+    HgiTextureUsageBitsShaderRead    = 1 << 3,
+    HgiTextureUsageBitsShaderWrite   = 1 << 4,
 
-    HgiTextureUsageCustomBitsBegin = 1 << 4,
+    HgiTextureUsageCustomBitsBegin = 1 << 5,
 };
 
 using HgiTextureUsage = HgiBits;
+
+/// \enum HgiSamplerAddressMode
+///
+/// Various modes used during sampling of a texture.
+///
+enum HgiSamplerAddressMode
+{
+    HgiSamplerAddressModeClampToEdge = 0,
+    HgiSamplerAddressModeMirrorClampToEdge,
+    HgiSamplerAddressModeRepeat,
+    HgiSamplerAddressModeMirrorRepeat,
+    HgiSamplerAddressModeClampToBorderColor,
+
+    HgiSamplerAddressModeCount
+};
+
+/// \enum HgiSamplerFilter
+///
+/// Sampler filtering modes that determine the pixel value that is returned.
+///
+/// <ul>
+/// <li>HgiSamplerFilterNearest:
+///   Returns the value of a single mipmap level.</li>
+/// <li>HgiSamplerFilterLinear:
+///   Combines the values of multiple mipmap levels.</li>
+/// </ul>
+///
+enum HgiSamplerFilter
+{
+    HgiSamplerFilterNearest = 0,
+    HgiSamplerFilterLinear  = 1,
+
+    HgiSamplerFilterCount
+};
+
+/// \enum HgiMipFilter
+///
+/// Sampler filtering modes that determine the pixel value that is returned.
+///
+/// <ul>
+/// <li>HgiMipFilterNotMipmapped:
+///   Texture is always sampled at mipmap level 0. (ie. max lod=0)</li>
+/// <li>HgiMipFilterNearest:
+///   Returns the value of a single mipmap level.</li>
+/// <li>HgiMipFilterLinear:
+///   Linear interpolates the values of up to two mipmap levels.</li>
+/// </ul>
+///
+enum HgiMipFilter
+{
+    HgiMipFilterNotMipmapped = 0,
+    HgiMipFilterNearest      = 1,
+    HgiMipFilterLinear       = 2,
+
+    HgiMipFilterCount
+};
 
 /// \enum HgiSampleCount
 ///
@@ -112,6 +179,8 @@ enum HgiSampleCount
     HgiSampleCount1  = 1,
     HgiSampleCount4  = 4,
     HgiSampleCount16 = 16,
+
+    HgiSampleCountEnd
 };
 
 /// \enum HgiAttachmentLoadOp
@@ -196,34 +265,29 @@ using HgiBufferUsage = HgiBits;
 ///   Fragment Shader.</li>
 /// <li>HgiShaderStageCompute:
 ///   Compute Shader.</li>
+/// <li>HgiShaderStageTessellationControl:
+///   Transforms the control points of the low order surface (patch).
+///   This runs before the tessellator fixed function stage.</li>
+/// <li>HgiShaderStageTessellationEval:
+///   Generates the surface geometry (the points) from the transformed control
+///   points for every coordinate coming out of the tessellator fixed function
+///  stage. </li>
+/// <li>HgiShaderStageGeometry:
+///   Governs the processing of Primitives.</li>
 /// </ul>
 ///
 enum HgiShaderStageBits : HgiBits
 {
-    HgiShaderStageVertex   = 1 << 0,
-    HgiShaderStageFragment = 1 << 1,
-    HgiShaderStageCompute  = 1 << 2
+    HgiShaderStageVertex               = 1 << 0,
+    HgiShaderStageFragment             = 1 << 1,
+    HgiShaderStageCompute              = 1 << 2,
+    HgiShaderStageTessellationControl  = 1 << 3,
+    HgiShaderStageTessellationEval     = 1 << 4,
+    HgiShaderStageGeometry             = 1 << 5,
+
+    HgiShaderStageCustomBitsBegin      = 1 << 6,
 };
 using HgiShaderStage = HgiBits;
-
-/// \enum HgiPipelineType
-///
-/// Describes the intended bind point for this pipeline.
-///
-/// <ul>
-/// <li>HgiPipelineTypeGraphics:
-///   The pipeline is meant to be bound to the graphics pipeline.</li>
-/// <li>HgiPipelineTypeCompute:
-///   The pipeline is meant to be bound to the compute pipeline.</li>
-/// </ul>
-///
-enum HgiPipelineType
-{
-    HgiPipelineTypeGraphics = 0,
-    HgiPipelineTypeCompute,
-
-    HgiPipelineTypeCount
-};
 
 /// \enum HgiBindResourceType
 ///
@@ -231,11 +295,16 @@ enum HgiPipelineType
 ///
 /// <ul>
 /// <li>HgiBindResourceTypeSampler:
-///   Sampler</li>
-/// <li>HgiBindResourceTypeCombinedImageSampler:
-///   Image and sampler combined in one.</li>
-/// <li>HgiBindResourceTypeSamplerImage:
-///   Image for use with sampling ops.</li>
+///   Sampler.
+///   Glsl example: uniform sampler samplerOnly</li>
+/// <li>HgiBindResourceTypeSampledImage:
+///   Image for use with sampling ops.
+///   Glsl example: uniform texture2D textureOnly
+///   texture(sampler2D(textureOnly, samplerOnly), ...)</li>
+/// <li>HgiBindResourceTypeCombinedSamplerImage:
+///   Image and sampler combined into one.
+///   Glsl example: uniform sampler2D texSmp;
+///   texture(texSmp, ...)</li>
 /// <li>HgiBindResourceTypeStorageImage:
 ///   Storage image used for image store/load ops (Unordered Access View).</li>
 /// <li>HgiBindResourceTypeUniformBuffer:
@@ -247,8 +316,8 @@ enum HgiPipelineType
 enum HgiBindResourceType
 {
     HgiBindResourceTypeSampler = 0,
-    HgiBindResourceTypeCombinedImageSampler,
-    HgiBindResourceTypeSamplerImage,
+    HgiBindResourceTypeSampledImage,
+    HgiBindResourceTypeCombinedSamplerImage,
     HgiBindResourceTypeStorageImage,
     HgiBindResourceTypeUniformBuffer,
     HgiBindResourceTypeStorageBuffer,
@@ -385,6 +454,86 @@ enum HgiCompareFunction
 
     HgiCompareFunctionCount
 };
+
+/// \enum HgiComponentSwizzle
+///
+/// Swizzle for a component.
+///
+enum HgiComponentSwizzle
+{
+    HgiComponentSwizzleZero = 0,
+    HgiComponentSwizzleOne,
+    HgiComponentSwizzleR,
+    HgiComponentSwizzleG,
+    HgiComponentSwizzleB,
+    HgiComponentSwizzleA,
+
+    HgiComponentSwizzleCount
+};
+
+/// \enum HgiPrimitiveType
+///
+/// What the stream of vertices being rendered represents
+///
+/// <ul>
+/// <li>HgiPrimitiveTypePointList:
+///   Rasterize a point at each vertex.</li>
+/// <li>HgiPrimitiveTypeLineList:
+///   Rasterize a line between each separate pair of vertices.</li>
+/// <li>HgiPrimitiveTypeLineStrip:
+///   Rasterize a line between each pair of adjacent vertices.</li>
+/// <li>HgiPrimitiveTypeTriangleList:
+///   Rasterize a triangle for every separate set of three vertices.</li>
+/// <li>HgiPrimitiveTypePatchList:
+///   A user-defined number of vertices, which is tessellated into
+///   points, lines, or triangles.</li>
+/// </ul>
+///
+enum HgiPrimitiveType
+{
+    HgiPrimitiveTypePointList = 0,
+    HgiPrimitiveTypeLineList,
+    HgiPrimitiveTypeLineStrip,
+    HgiPrimitiveTypeTriangleList,
+    HgiPrimitiveTypePatchList,
+
+    HgiPrimitiveTypeCount
+};
+
+/// \enum HgiSubmitWaitType
+///
+/// Describes command submission wait behavior.
+///
+/// <ul>
+/// <li>HgiSubmitWaitTypeNoWait:
+///   CPU should not wait for the GPU to finish processing the cmds.</li>
+/// <li>HgiSubmitWaitTypeWaitUntilCompleted:
+///   The CPU waits ("blocked") until the GPU has consumed the cmds.</li>
+/// </ul>
+///
+enum HgiSubmitWaitType
+{
+    HgiSubmitWaitTypeNoWait = 0,
+    HgiSubmitWaitTypeWaitUntilCompleted,
+};
+
+/// \enum HgiMemoryBarrier
+///
+/// Describes what objects the memory barrier affects.
+///
+/// <ul>
+/// <li>HgiMemoryBarrierNone:
+///   No barrier (no-op).</li>
+/// <li>HgiMemoryBarrierAll:
+///   The barrier affects all memory writes and reads.</li>
+/// </ul>
+///
+enum HgiMemoryBarrierBits
+{
+    HgiMemoryBarrierNone = 0,
+    HgiMemoryBarrierAll  = 1 << 0
+};
+using HgiMemoryBarrier = HgiBits;
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

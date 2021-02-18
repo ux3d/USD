@@ -50,9 +50,9 @@ WRAP_CUSTOM;
 
         
 static UsdAttribute
-_CreateFieldNameAttr(UsdVolField3DAsset &self,
+_CreateFieldDataTypeAttr(UsdVolField3DAsset &self,
                                       object defaultVal, bool writeSparsely) {
-    return self.CreateFieldNameAttr(
+    return self.CreateFieldDataTypeAttr(
         UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Token), writeSparsely);
 }
         
@@ -62,12 +62,14 @@ _CreateFieldPurposeAttr(UsdVolField3DAsset &self,
     return self.CreateFieldPurposeAttr(
         UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Token), writeSparsely);
 }
-        
-static UsdAttribute
-_CreateFieldIndexAttr(UsdVolField3DAsset &self,
-                                      object defaultVal, bool writeSparsely) {
-    return self.CreateFieldIndexAttr(
-        UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Int), writeSparsely);
+
+static std::string
+_Repr(const UsdVolField3DAsset &self)
+{
+    std::string primRepr = TfPyRepr(self.GetPrim());
+    return TfStringPrintf(
+        "UsdVol.Field3DAsset(%s)",
+        primRepr.c_str());
 }
 
 } // anonymous namespace
@@ -103,10 +105,10 @@ void wrapUsdVolField3DAsset()
         .def(!self)
 
         
-        .def("GetFieldNameAttr",
-             &This::GetFieldNameAttr)
-        .def("CreateFieldNameAttr",
-             &_CreateFieldNameAttr,
+        .def("GetFieldDataTypeAttr",
+             &This::GetFieldDataTypeAttr)
+        .def("CreateFieldDataTypeAttr",
+             &_CreateFieldDataTypeAttr,
              (arg("defaultValue")=object(),
               arg("writeSparsely")=false))
         
@@ -116,14 +118,8 @@ void wrapUsdVolField3DAsset()
              &_CreateFieldPurposeAttr,
              (arg("defaultValue")=object(),
               arg("writeSparsely")=false))
-        
-        .def("GetFieldIndexAttr",
-             &This::GetFieldIndexAttr)
-        .def("CreateFieldIndexAttr",
-             &_CreateFieldIndexAttr,
-             (arg("defaultValue")=object(),
-              arg("writeSparsely")=false))
 
+        .def("__repr__", ::_Repr)
     ;
 
     _CustomWrapCode(cls);

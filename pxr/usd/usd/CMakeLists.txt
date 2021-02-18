@@ -77,12 +77,15 @@ pxr_library(usd
     PRIVATE_CLASSES
         clip
         clipCache
+        clipSet
+        clipSetDefinition
         crateData
         crateFile
         instanceCache
         instanceKey
         integerCoding
         interpolators
+        primTypeInfoCache
         usdzResolver
         valueUtils
 
@@ -122,6 +125,7 @@ pxr_library(usd
         wrapPrimDefinition.cpp
         wrapPrimFlags.cpp
         wrapPrimRange.cpp
+        wrapPrimTypeInfo.cpp
         wrapProperty.cpp
         wrapReferences.cpp
         wrapRelationship.cpp
@@ -150,13 +154,32 @@ pxr_library(usd
         generatedSchema.usda
         schema.usda:usd/schema.usda
         codegenTemplates/api.h
-        codegenTemplates/plugInfo.json
+        codegenTemplates/plugInfo.json:no_subst
         codegenTemplates/schemaClass.cpp
         codegenTemplates/schemaClass.h
         codegenTemplates/tokens.cpp
         codegenTemplates/tokens.h
         codegenTemplates/wrapSchemaClass.cpp
         codegenTemplates/wrapTokens.cpp
+
+    DOXYGEN_FILES
+        doxygen/advancedFeatures.dox
+        doxygen/authoringEditing.dox
+        doxygen/bestPractices.dox
+        doxygen/commonIdioms.dox
+        doxygen/datatypes.dox
+        doxygen/dynamicFileFormat.dox
+        doxygen/front.dox
+        doxygen/generatingSchemas.dox
+        doxygen/instancing.dox
+        doxygen/multiThreading.dox
+        doxygen/objectModel.dox
+        doxygen/propertiesOfSceneDescription.dox 
+        doxygen/valueClips.dox
+        doxygen/images/instancing/Instancing_Example.png
+        doxygen/images/instancing/Nested_Instancing_Example.png
+        doxygen/images/instancing/Relationship_Example.png
+        doxygen/images/instancing/Uninstanced_vs_Instanced.png
 )
 
 if (NOT PXR_ENABLE_PYTHON_SUPPORT)
@@ -185,6 +208,8 @@ pxr_test_scripts(
     testenv/testUsdCratePayloadConversionFromVersion07.py
     testenv/testUsdCreateProperties.py
     testenv/testUsdDataFormats.py
+    testenv/testUsdExternalAssetDependencies.py
+    testenv/testUsdFallbackPrimTypes.py
     testenv/testUsdFileFormats.py
     testenv/testUsdFlatten.py
     testenv/testUsdFlatten2.py
@@ -221,6 +246,18 @@ pxr_test_scripts(
     testenv/testUsdVariantFallbacks.py
     testenv/testUsdVariants.py
     testenv/testUsdZipFile.py
+)
+
+pxr_build_test_shared_lib(TestUsdProceduralExternalAssetsFileFormatPlugin
+    CREATE_FRAMEWORK
+    INSTALL_PREFIX UsdPlugins
+    LIBRARIES
+        sdf
+        tf
+        usd
+        
+    CPPFILES
+        testenv/TestUsdProceduralExternalAssetsFileFormatPlugin.cpp
 )
 
 pxr_build_test(testUsdAttributeBlockingCpp
@@ -379,6 +416,16 @@ pxr_install_test_dir(
 )
 
 pxr_install_test_dir(
+    SRC testenv/testUsdExternalAssetDependencies.testenv
+    DEST testUsdExternalAssetDependencies
+)
+
+pxr_install_test_dir(
+    SRC testenv/testUsdFallbackPrimTypes
+    DEST testUsdFallbackPrimTypes
+)
+
+pxr_install_test_dir(
     SRC testenv/testUsdFlatten
     DEST testUsdFlatten
 )
@@ -524,11 +571,6 @@ pxr_install_test_dir(
 )
 
 pxr_install_test_dir(
-    SRC testenv/testUsdValueClips_Legacy
-    DEST testUsdValueClips_Legacy
-)
-
-pxr_install_test_dir(
     SRC testenv/testUsdVariants
     DEST testUsdVariants
 )
@@ -585,17 +627,6 @@ pxr_register_test(testUsdValueClips
     PYTHON
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdValueClips"
     EXPECTED_RETURN_CODE 0
-)
-
-# This test runs the same test script as testUsdValueClips
-# but uses a different set of test assets that are installed above.
-pxr_register_test(testUsdValueClips_Legacy
-    PYTHON
-    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdValueClips"
-    EXPECTED_RETURN_CODE 0
-    ENV
-        USD_AUTHOR_LEGACY_CLIPS=1
-        USD_READ_LEGACY_CLIPS=1
 )
 
 pxr_register_test(testUsdVariantEditing
@@ -662,6 +693,18 @@ pxr_register_test(testUsdCreateAttributeCpp
     EXPECTED_RETURN_CODE 0
 )
 
+pxr_register_test(testUsdExternalAssetDependencies
+    PYTHON
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdExternalAssetDependencies"
+    EXPECTED_RETURN_CODE 0  
+)
+
+pxr_register_test(testUsdFallbackPrimTypes
+    PYTHON
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdFallbackPrimTypes"
+    EXPECTED_RETURN_CODE 0
+)
+
 pxr_register_test(testUsdHardToReach
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdHardToReach"
     EXPECTED_RETURN_CODE 0
@@ -671,7 +714,7 @@ pxr_register_test(testUsdInstancing
     PYTHON
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdInstancing"
     ENV
-        USD_ASSIGN_MASTERS_DETERMINISTICALLY=1
+        USD_ASSIGN_PROTOTYPES_DETERMINISTICALLY=1
 )
 
 pxr_register_test(testUsdInstanceProxy
@@ -728,6 +771,8 @@ pxr_register_test(testUsdPrimGetDescendants
 pxr_register_test(testUsdInstancingCpp
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdInstancingCpp"
     EXPECTED_RETURN_CODE 0
+    ENV
+        USD_ASSIGN_PROTOTYPES_DETERMINISTICALLY=1
 )
 
 pxr_register_test(testUsdPrims
@@ -782,6 +827,12 @@ pxr_register_test(testUsdStage
     EXPECTED_RETURN_CODE 0
 )
 
+pxr_register_test(testUsdStagePopulationMasks
+    PYTHON
+    COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdStagePopulationMasks"
+    EXPECTED_RETURN_CODE 0
+)
+
 pxr_register_test(testUsdTimeCodeRepr
     PYTHON
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdTimeCodeRepr"
@@ -792,6 +843,8 @@ pxr_register_test(testUsdTimeOffsets
     PYTHON
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdTimeOffsets"
     EXPECTED_RETURN_CODE 0
+    ENV
+        PCP_DISABLE_TIME_SCALING_BY_LAYER_TCPS=0
 )
 
 pxr_register_test(testUsdPrimRange
@@ -854,6 +907,8 @@ pxr_register_test(testUsdFlatten2
     STDOUT_REDIRECT flat_BasicInstancingAndVariants.usda
     DIFF_COMPARE flat_BasicInstancingAndVariants.usda
     EXPECTED_RETURN_CODE 0
+    ENV
+        USD_ASSIGN_PROTOTYPES_DETERMINISTICALLY=1
 )
 
 pxr_register_test(testUsdFlatten3
@@ -862,6 +917,8 @@ pxr_register_test(testUsdFlatten3
     STDOUT_REDIRECT flat_BasicInstancing.usda
     DIFF_COMPARE flat_BasicInstancing.usda
     EXPECTED_RETURN_CODE 0
+    ENV
+        USD_ASSIGN_PROTOTYPES_DETERMINISTICALLY=1
 )
 
 pxr_register_test(testUsdFlatten4
@@ -871,7 +928,7 @@ pxr_register_test(testUsdFlatten4
     DIFF_COMPARE flat_BasicInstancingAndNestedInstances.usda
     EXPECTED_RETURN_CODE 0
     ENV
-        USD_ASSIGN_MASTERS_DETERMINISTICALLY=1
+        USD_ASSIGN_PROTOTYPES_DETERMINISTICALLY=1
 )
 
 pxr_register_test(testUsdFlattenLayerStack
@@ -913,11 +970,15 @@ pxr_register_test(testUsdTimeValueAuthoring
     PYTHON
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdTimeValueAuthoring"
     EXPECTED_RETURN_CODE 0
+    ENV
+        PCP_DISABLE_TIME_SCALING_BY_LAYER_TCPS=0
 )
 
 pxr_register_test(testUsdTimeValueAuthoringCpp
     COMMAND "${CMAKE_INSTALL_PREFIX}/tests/testUsdTimeValueAuthoringCpp"
     EXPECTED_RETURN_CODE 0
+    ENV
+        PCP_DISABLE_TIME_SCALING_BY_LAYER_TCPS=0
 )
 
 pxr_register_test(testUsdUsdzFileFormat

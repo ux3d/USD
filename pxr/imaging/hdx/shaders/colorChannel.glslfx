@@ -28,9 +28,6 @@
 {
     "techniques": {
         "default": {
-            "ColorChannelVertex": {
-                "source": [ "ColorChannel.Vertex" ]
-            },
             "ColorChannelFragment": {
                 "source": [ "ColorChannel.Fragment" ]
             }
@@ -38,27 +35,8 @@
     }
 }
 
--- glsl ColorChannel.Vertex
-
-#version 120
-
-attribute vec4 position;
-attribute vec2 uvIn;
-
-varying vec2 uv;
-
-void main(void)
-{
-    gl_Position = position;
-    uv = uvIn;
-}
-
 -- glsl ColorChannel.Fragment
 
-varying vec2 uv;
-
-uniform sampler2D colorIn;
-uniform int channel;
 
 // Display channel values. These should match the the indices of the entries in
 // HdxDisplayChannelTokens
@@ -71,7 +49,8 @@ uniform int channel;
 
 void main(void)
 {
-    vec4 color = texture2D(colorIn, uv);
+    vec2 fragCoord = uvOut * screenSize;
+    vec4 color = HdTexelFetch_colorIn(ivec2(fragCoord));
 
     // Display Channel
     if (channel == CHANNEL_RED) {
@@ -87,5 +66,5 @@ void main(void)
         color.r = color.g = color.b = dot(color.rgb, W);
     } // Do nothing if channel == CHANNEL_COLOR
 
-    gl_FragColor = color;
+    hd_FragColor = color;
 }

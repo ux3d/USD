@@ -27,6 +27,7 @@
 #include "pxr/pxr.h"
 #include "pxr/imaging/hdSt/api.h"
 #include "pxr/imaging/hdSt/materialNetwork.h"
+#include "pxr/imaging/hdSt/shaderCode.h"
 #include "pxr/imaging/hd/material.h"
 #include "pxr/imaging/hf/perfLog.h"
 
@@ -34,52 +35,35 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-typedef boost::shared_ptr<class HdStShaderCode> HdStShaderCodeSharedPtr;
-typedef boost::shared_ptr<class HdStSurfaceShader> HdStSurfaceShaderSharedPtr;
-
-using HdStTextureResourceSharedPtr = 
-    std::shared_ptr<class HdStTextureResource>;
-using HdStTextureResourceHandleSharedPtr =
-    std::shared_ptr<class HdStTextureResourceHandle>;
-using HdStTextureResourceHandleSharedPtrVector =
-    std::vector<HdStTextureResourceHandleSharedPtr>;
+using HdStSurfaceShaderSharedPtr = std::shared_ptr<class HdStSurfaceShader>;
 
 class HioGlslfx;
 
-class HdStMaterial final: public HdMaterial {
+class HdStMaterial final: public HdMaterial
+{
 public:
     HF_MALLOC_TAG_NEW("new HdStMaterial");
 
     HDST_API
     HdStMaterial(SdfPath const& id);
     HDST_API
-    virtual ~HdStMaterial();
+    ~HdStMaterial() override;
 
     /// Synchronizes state from the delegate to this object.
     HDST_API
-    virtual void Sync(HdSceneDelegate *sceneDelegate,
-                      HdRenderParam   *renderParam,
-                      HdDirtyBits     *dirtyBits) override;
+    void Sync(HdSceneDelegate *sceneDelegate,
+              HdRenderParam   *renderParam,
+              HdDirtyBits     *dirtyBits) override;
 
     /// Returns the minimal set of dirty bits to place in the
     /// change tracker for use in the first sync of this prim.
     /// Typically this would be all dirty bits.
     HDST_API
-    virtual HdDirtyBits GetInitialDirtyBitsMask() const override;
-
-    /// Causes the shader to be reloaded.
-    HDST_API
-    virtual void Reload() override;
+    HdDirtyBits GetInitialDirtyBitsMask() const override;
 
     /// Obtains the render delegate specific representation of the shader.
     HDST_API
     HdStShaderCodeSharedPtr GetShaderCode() const;
-
-    /// Obtain the scene delegates's globally unique id for the texture
-    /// resource identified by textureId.
-    inline HdTextureResource::ID GetTextureResourceID(
-        HdSceneDelegate* sceneDelegate,
-        SdfPath const& textureId) const;
 
     /// Summary flag. Returns true if the material is bound to one or more
     /// textures and any of those textures is a ptex texture.
@@ -103,10 +87,20 @@ public:
     void SetSurfaceShader(HdStSurfaceShaderSharedPtr &shaderCode);
 
 private:
-    HdStTextureResourceHandleSharedPtr
-    _GetTextureResourceHandle(HdSceneDelegate *sceneDelegate,
-                              HdSt_MaterialParam const &param);
-
+    // Processes the texture descriptors from a material network to
+    // create textures using the Storm texture system.
+    //
+    // Adds buffer specs/sources necessary for textures, e.g., bindless
+    // handles or sampling transform for field textures.
+    void _ProcessTextureDescriptors(
+        HdSceneDelegate * sceneDelegate,
+        HdStResourceRegistrySharedPtr const& resourceRegistry,
+        std::weak_ptr<HdStShaderCode> const &shaderCode,
+        HdStMaterialNetwork::TextureDescriptorVector const &descs,
+        HdStShaderCode::NamedTextureHandleVector * texturesFromStorm,
+        HdBufferSpecVector * specs,
+        HdBufferSourceSharedPtrVector * sources);
+    
     bool
     _GetHasLimitSurfaceEvaluation(VtDictionary const & metadata) const;
 
@@ -116,27 +110,16 @@ private:
 
     HdStSurfaceShaderSharedPtr _surfaceShader;
 
-    // Holds fallback textures if a texture cannot be found, but also holds
-    // texture we discovered inside a material network that could not be found
-    // in the resource registry (no Bprim inserted).
-    HdStTextureResourceHandleSharedPtrVector _internalTextureResourceHandles;
-
     bool _isInitialized : 1;
     bool _hasPtex : 1;
     bool _hasLimitSurfaceEvaluation : 1;
     bool _hasDisplacement : 1;
 
     TfToken _materialTag;
+    size_t _textureHash;
 
     HdStMaterialNetwork _networkProcessor;
 };
-
-inline HdTextureResource::ID
-HdStMaterial::GetTextureResourceID(HdSceneDelegate* sceneDelegate,
-                               SdfPath const& textureId) const
-{
-    return sceneDelegate->GetTextureResourceID(textureId);
-}
 
 inline bool HdStMaterial::HasPtex() const
 {

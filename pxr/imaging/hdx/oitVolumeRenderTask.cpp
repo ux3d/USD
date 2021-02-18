@@ -21,7 +21,7 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include "pxr/imaging/glf/glew.h"
+#include "pxr/imaging/garch/glApi.h"
 
 #include "pxr/imaging/hdx/package.h"
 #include "pxr/imaging/hdx/oitVolumeRenderTask.h"
@@ -47,7 +47,7 @@ HdxOitVolumeRenderTask::HdxOitVolumeRenderTask(
                 HdSceneDelegate* delegate, SdfPath const& id)
     : HdxRenderTask(delegate, id)
     , _oitVolumeRenderPassShader(
-        boost::make_shared<HdStRenderPassShader>(
+        std::make_shared<HdStRenderPassShader>(
             HdxPackageRenderPassOitVolumeShader()))
     , _isOitEnabled(HdxOitBufferAccessor::IsOitEnabled())
 {
@@ -59,7 +59,7 @@ HdxOitVolumeRenderTask::HdxOitVolumeRenderTask(
 HdxOitVolumeRenderTask::~HdxOitVolumeRenderTask() = default;
 
 void
-HdxOitVolumeRenderTask::Sync(
+HdxOitVolumeRenderTask::_Sync(
     HdSceneDelegate* delegate,
     HdTaskContext* ctx,
     HdDirtyBits* dirtyBits)
@@ -68,7 +68,7 @@ HdxOitVolumeRenderTask::Sync(
     HF_MALLOC_TAG_FUNCTION();
 
     if (_isOitEnabled) {
-        HdxRenderTask::Sync(delegate, ctx, dirtyBits);
+        HdxRenderTask::_Sync(delegate, ctx, dirtyBits);
     }
 }
 
@@ -105,6 +105,7 @@ HdxOitVolumeRenderTask::Execute(HdTaskContext* ctx)
 
     HdxOitBufferAccessor oitBufferAccessor(ctx);
 
+    oitBufferAccessor.RequestOitBuffers();
     oitBufferAccessor.InitializeOitBuffersIfNecessary();
 
     HdRenderPassStateSharedPtr renderPassState = _GetRenderPassState(ctx);

@@ -201,6 +201,9 @@ function(_install_resource_files NAME pluginInstallPrefix pluginToLibraryPath)
     _get_resources_dir(${pluginInstallPrefix} ${NAME} resourcesPath)
 
     foreach(resourceFile ${ARGN})
+        # A resource file may be marked to not do any variable substitution,
+        # like <src file>:no_subst, for these resources _plugInfo_subst will not
+        # be called
         # A resource file may be specified like <src file>:<dst file> to
         # indicate that it should be installed to a different location in
         # the resources area. Check if this is the case.
@@ -209,8 +212,15 @@ function(_install_resource_files NAME pluginInstallPrefix pluginToLibraryPath)
         if (n EQUAL 1)
            set(resourceDestFile ${resourceFile})
         elseif (n EQUAL 2)
-           list(GET resourceFile 1 resourceDestFile)
+           list(GET resourceFile 1 secondaryOption)
            list(GET resourceFile 0 resourceFile)
+           if (${secondaryOption} STREQUAL "no_subst")
+               set(plugInfoNoSubstitution ON)
+               set(resourceDestFile ${resourceFile})
+           else()
+               # secondaryOption provides resourceDestFile
+               set(resourceDestFile ${secondaryOption})
+           endif()
         else()
            message(FATAL_ERROR
                "Failed to parse resource path ${resourceFile}")
@@ -224,7 +234,16 @@ function(_install_resource_files NAME pluginInstallPrefix pluginToLibraryPath)
         # path. Otherwise, use the original relative path which is relative to
         # the source directory.
         if (${destFileName} STREQUAL "plugInfo.json")
-            _plugInfo_subst(${NAME} "${pluginToLibraryPath}" ${resourceFile})
+            if (DEFINED plugInfoNoSubstitution)
+                # Do not substitute variables and only copy the plugInfo file
+                configure_file(
+                    ${resourceFile}
+                    ${CMAKE_CURRENT_BINARY_DIR}/${resourceFile}
+                    COPYONLY
+                )
+            else()
+                _plugInfo_subst(${NAME} "${pluginToLibraryPath}" ${resourceFile})
+            endif()
             set(resourceFile "${CMAKE_CURRENT_BINARY_DIR}/${resourceFile}")
         endif()
 
@@ -499,65 +518,33 @@ function(_pxr_enable_precompiled_header TARGET_NAME)
                 COMMENT "Copying ${source_header_name}"
             )
 
-            # CMake has no simple way of invoking the compiler with additional
-            # arguments so we must make a custom command and pass the compiler
-            # arguments we collect here.
+            set(incs "$<TARGET_PROPERTY:${TARGET_NAME},INCLUDE_DIRECTORIES>")
+            set(defs "$<TARGET_PROPERTY:${TARGET_NAME},COMPILE_DEFINITIONS>")
+            set(opts "$<TARGET_PROPERTY:${TARGET_NAME},COMPILE_OPTIONS>")
+            set(incs "$<$<BOOL:${incs}>:-I$<JOIN:${incs}, -I>>")
+            set(defs "$<$<BOOL:${defs}>:-D$<JOIN:${defs}, -D>>")
+            _pch_get_property(${TARGET_NAME} COMPILE_FLAGS flags)
+
+            # Ideally we'd just put have generator expressions in the
+            # COMMAND in add_custom_command().  However that will
+            # write the result of the JOINs as single strings (escaping
+            # spaces) and we want them as individual options.
             #
-            # $<JOIN:...> is available starting with 2.8.12.  In later
-            # cmake versions getting the target properties may not
-            # report all values (in particular, some include directories
-            # may not be reported).
-            if(CMAKE_VERSION VERSION_LESS "2.8.12")
-                _pch_get_property(${TARGET_NAME} INCLUDE_DIRECTORIES incs)
-                _pch_get_property(${TARGET_NAME} COMPILE_DEFINITIONS defs)
-                _pch_get_property(${TARGET_NAME} COMPILE_FLAGS flags)
-                _pch_get_property(${TARGET_NAME} COMPILE_OPTIONS opts)
-                if(NOT "${incs}" STREQUAL "")
-                    string(REPLACE ";" ";-I" incs "${incs}")
-                    set(incs "-I${incs}")
-                endif()
-                if(NOT "${defs}" STREQUAL "")
-                    string(REPLACE ";" ";-D" defs "${defs}")
-                    set(defs "-D${defs}")
-                endif()
-                separate_arguments(flags UNIX_COMMAND "${flags}")
+            # So we use file(GENERATE) which doesn't suffer from that
+            # problem and execute the generated cmake script as the
+            # COMMAND.
+            file(GENERATE
+                OUTPUT "$<TARGET_FILE:${TARGET_NAME}>.pchgen"
+                CONTENT "execute_process(COMMAND ${CMAKE_CXX_COMPILER} ${flags} ${opt} ${defs} ${incs} -c -x c++-header -o \"${abs_precompiled_path}\" \"${abs_output_header_path}\")"
+            )
 
-                # Command to generate the precompiled header.
-                add_custom_command(
-                    OUTPUT "${abs_precompiled_path}"
-                    COMMAND ${CMAKE_CXX_COMPILER} ${flags} ${opts} ${defs} ${incs} -c -x c++-header -o "${abs_precompiled_path}" "${abs_output_header_path}"
-                    DEPENDS "${abs_output_header_path}"
-                    COMMENT "Precompiling ${source_header_name} in ${TARGET_NAME}"
-                )
-            else()
-                set(incs "$<TARGET_PROPERTY:${TARGET_NAME},INCLUDE_DIRECTORIES>")
-                set(defs "$<TARGET_PROPERTY:${TARGET_NAME},COMPILE_DEFINITIONS>")
-                set(opts "$<TARGET_PROPERTY:${TARGET_NAME},COMPILE_OPTIONS>")
-                set(incs "$<$<BOOL:${incs}>:-I$<JOIN:${incs}, -I>>")
-                set(defs "$<$<BOOL:${defs}>:-D$<JOIN:${defs}, -D>>")
-                _pch_get_property(${TARGET_NAME} COMPILE_FLAGS flags)
-
-                # Ideally we'd just put have generator expressions in the
-                # COMMAND in add_custom_command().  However that will
-                # write the result of the JOINs as single strings (escaping
-                # spaces) and we want them as individual options.
-                #
-                # So we use file(GENERATE) which doesn't suffer from that
-                # problem and execute the generated cmake script as the
-                # COMMAND.
-                file(GENERATE
-                    OUTPUT "$<TARGET_FILE:${TARGET_NAME}>.pchgen"
-                    CONTENT "execute_process(COMMAND ${CMAKE_CXX_COMPILER} ${flags} ${opt} ${defs} ${incs} -c -x c++-header -o \"${abs_precompiled_path}\" \"${abs_output_header_path}\")"
-                )
-
-                # Command to generate the precompiled header.
-                add_custom_command(
-                    OUTPUT "${abs_precompiled_path}"
-                    COMMAND ${CMAKE_COMMAND} -P "$<TARGET_FILE:${TARGET_NAME}>.pchgen"
-                    DEPENDS "${abs_output_header_path}"
-                    COMMENT "Precompiling ${source_header_name} in ${TARGET_NAME}"
-                )
-            endif()
+            # Command to generate the precompiled header.
+            add_custom_command(
+                OUTPUT "${abs_precompiled_path}"
+                COMMAND ${CMAKE_COMMAND} -P "$<TARGET_FILE:${TARGET_NAME}>.pchgen"
+                DEPENDS "${abs_output_header_path}"
+                COMMENT "Precompiling ${source_header_name} in ${TARGET_NAME}"
+            )
         endif()
     endif()
 
@@ -1078,6 +1065,7 @@ function(_pxr_library NAME)
         LIBRARIES
         INCLUDE_DIRS
         RESOURCE_FILES
+        DOXYGEN_FILES
         LIB_INSTALL_PREFIX_RESULT
     )
     cmake_parse_arguments(args
@@ -1150,6 +1138,21 @@ function(_pxr_library NAME)
             ${args_PUBLIC_HEADERS}
             ${args_PRIVATE_HEADERS}
         )
+        if(PXR_PY_UNDEFINED_DYNAMIC_LOOKUP)
+            # When not explicitly linking to the python lib we need to allow
+            # the linker to complete without resolving all symbols. This lets
+            # python resolve at runtime, and use this to support python
+            # versions built with different compilers and point versions.
+            # This only needed on macOS; this is not an issue on Windows,
+            # and on Linux the equivalent --allow-shlib-undefined option for ld
+            # is enabled by default when creating shared libraries.
+            if(APPLE)
+                target_link_options(${NAME}
+                    PUBLIC
+                    "LINKER:SHELL:-undefined dynamic_lookup"
+                )
+            endif()
+        endif()
     endif()
 
     #
@@ -1272,24 +1275,13 @@ function(_pxr_library NAME)
             ${PXR_PREFIX}
     )
 
-    # XXX: Versions of CMake 2.8.11 and earlier complain about
-    # INTERFACE_INCLUDE_DIRECTORIES containing a relative path if we include
-    # the INTERFACE directory here, so only do so for more recent versions.
-    if(${CMAKE_VERSION} VERSION_GREATER 2.8.11.2)
-        target_include_directories(${NAME}
-            PRIVATE
-                "${CMAKE_BINARY_DIR}/include"
-                "${CMAKE_BINARY_DIR}/${PXR_INSTALL_SUBDIR}/include"
-            INTERFACE
-                $<INSTALL_INTERFACE:${headerInstallDir}>
-        )
-    else()
-        target_include_directories(${NAME}
-            PRIVATE
-                "${CMAKE_BINARY_DIR}/include"
-                "${CMAKE_BINARY_DIR}/${PXR_INSTALL_SUBDIR}/include"
-        )
-    endif()
+    target_include_directories(${NAME}
+        PRIVATE
+            "${CMAKE_BINARY_DIR}/include"
+            "${CMAKE_BINARY_DIR}/${PXR_INSTALL_SUBDIR}/include"
+        INTERFACE
+            $<INSTALL_INTERFACE:${headerInstallDir}>
+    )
 
     # The INCLUDE_DIRS argument specifies directories containing headers
     # for third-party libraries needed by this library. We treat these
@@ -1301,6 +1293,44 @@ function(_pxr_library NAME)
         PUBLIC
             ${args_INCLUDE_DIRS}
     )
+
+    # If we're building documentation, we need to copy the files we want
+    # doxygen to process to a parallel structure in the build directory.
+    # Doxygen will be run on these files during the install step ---
+    # see pxr_build_documentation().
+    if(PXR_BUILD_DOCUMENTATION)
+        set(docBuildDir ${CMAKE_BINARY_DIR}/docs/${headerInstallPrefix})
+        set(doxygenFiles "${args_PUBLIC_HEADERS};${args_DOXYGEN_FILES}")
+
+        set(files_copied "")
+
+        foreach(doxygenFile ${doxygenFiles})
+            add_custom_command(
+                OUTPUT ${docBuildDir}/${doxygenFile}
+                COMMAND
+                    ${CMAKE_COMMAND} -E make_directory ${docBuildDir}
+                COMMAND
+                    ${CMAKE_COMMAND} -E copy 
+                    ${CMAKE_CURRENT_SOURCE_DIR}/${doxygenFile}
+                    ${docBuildDir}/${doxygenFile}
+                MAIN_DEPENDENCY
+                    ${CMAKE_CURRENT_SOURCE_DIR}/${doxygenFile}
+                VERBATIM
+            )
+
+            list(APPEND files_copied ${docBuildDir}/${doxygenFile})
+        endforeach()
+
+        add_custom_target(${NAME}_docfiles
+            DEPENDS ${files_copied}
+        )
+        add_dependencies(${NAME} ${NAME}_docfiles)
+
+        set_target_properties(${NAME}_docfiles
+            PROPERTIES
+                FOLDER "docs"
+        )
+    endif()
 
     # XXX -- May want some plugins to be baked into monolithic.
     _pxr_target_link_libraries(${NAME} ${args_LIBRARIES})

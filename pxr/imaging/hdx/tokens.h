@@ -74,30 +74,31 @@ TF_DECLARE_PUBLIC_TOKENS(HdxTokens, HDX_API, HDX_TOKENS);
     (lightTypeDirectional)      \
     (lightTypeSpot)             \
                                 \
+    (aovInputTask)              \
+    (drawTargetTask)            \
+    (drawTargetResolveTask)     \
+    (colorizeSelectionTask)     \
     (oitRenderTask)             \
     (oitResolveTask)            \
+    (oitVolumeRenderTask)       \
+    (pickTask)                  \
+    (pickFromRenderBufferTask)  \
+    (presentTask)               \
     (renderTask)                \
     (renderSetupTask)           \
     (simpleLightTask)           \
-    (shadowTask)                \
-    (drawTargetTask)            \
-    (drawTargetResolveTask)     \
-    (pickTask)                  \
-    (pickFromRenderBufferTask)  \
-    (colorizeTask)              \
-    (colorizeSelectionTask)
+    (shadowTask)
 
 TF_DECLARE_PUBLIC_TOKENS(HdxPrimitiveTokens, HDX_API, HDX_PRIMITIVE_TOKENS);
 
-#define HDX_OPTION_TOKENS    \
-    (taskSetAlphaToCoverage)
-
-TF_DECLARE_PUBLIC_TOKENS(HdxOptionTokens, HDX_API, HDX_OPTION_TOKENS);
+// inCameraGuide is for guides for a camera that only show up when looking
+// through that camera.
 
 #define HDX_RENDERTAG_TOKENS   \
     (renderingGuide)            \
     (label)                     \
     (cameraGuide)               \
+    (inCameraGuide)             \
     (streamline)                \
     (interactiveOnlyGeom)       \
     (path)
@@ -131,6 +132,17 @@ TF_DECLARE_PUBLIC_TOKENS(HdxColorCorrectionTokens, HDX_API,
 
 TF_DECLARE_PUBLIC_TOKENS(HdxColorChannelTokens, HDX_API, 
                          HDX_COLOR_CHANNEL_TOKENS);
+
+// Color channels
+#define HDX_AOV_TOKENS  \
+    /* colorIntermediate->colorIntermediate is used to ping-pong
+     * between two color targets when a task wishes to
+     * read from the color target and also write into it.
+     */                                         \
+    (colorIntermediate)                         \
+
+TF_DECLARE_PUBLIC_TOKENS(HdxAovTokens, HDX_API, 
+                         HDX_AOV_TOKENS);
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

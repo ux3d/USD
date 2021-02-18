@@ -139,6 +139,22 @@ _CreateShutterCloseAttr(UsdGeomCamera &self,
     return self.CreateShutterCloseAttr(
         UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Double), writeSparsely);
 }
+        
+static UsdAttribute
+_CreateExposureAttr(UsdGeomCamera &self,
+                                      object defaultVal, bool writeSparsely) {
+    return self.CreateExposureAttr(
+        UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Float), writeSparsely);
+}
+
+static std::string
+_Repr(const UsdGeomCamera &self)
+{
+    std::string primRepr = TfPyRepr(self.GetPrim());
+    return TfStringPrintf(
+        "UsdGeom.Camera(%s)",
+        primRepr.c_str());
+}
 
 } // anonymous namespace
 
@@ -263,7 +279,15 @@ void wrapUsdGeomCamera()
              &_CreateShutterCloseAttr,
              (arg("defaultValue")=object(),
               arg("writeSparsely")=false))
+        
+        .def("GetExposureAttr",
+             &This::GetExposureAttr)
+        .def("CreateExposureAttr",
+             &_CreateExposureAttr,
+             (arg("defaultValue")=object(),
+              arg("writeSparsely")=false))
 
+        .def("__repr__", ::_Repr)
     ;
 
     _CustomWrapCode(cls);

@@ -25,6 +25,7 @@
 #include "pxr/usdImaging/usdImaging/delegate.h"
 #include "pxr/usdImaging/usdImaging/indexProxy.h"
 #include "pxr/usdImaging/usdImaging/tokens.h"
+#include "pxr/usdImaging/usdImaging/materialParamUtils.h"
 
 #include "pxr/imaging/hd/material.h"
 #include "pxr/imaging/hd/perfLog.h"
@@ -33,11 +34,12 @@
 #include "pxr/usd/usdShade/material.h"
 #include "pxr/usd/usdShade/shader.h"
 
-#include "pxr/usd/ar/resolver.h"
 #include "pxr/usd/sdr/registry.h"
 #include "pxr/usd/sdr/shaderNode.h"
 #include "pxr/usd/sdr/shaderProperty.h"
 
+#include "pxr/usd/ar/resolverScopedCache.h"
+#include "pxr/usd/ar/resolverContextBinder.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -130,17 +132,6 @@ UsdImagingMaterialAdapter::UpdateForTime(
     UsdImagingInstancerContext const*
     instancerContext) const
 {
-    if (requestedBits & HdMaterial::DirtyResource) {
-        // Walk the material network and generate a HdMaterialNetworkMap
-        // structure to store it in the value cache.
-        bool timeVarying = false;
-        HdMaterialNetworkMap map;
-        TfToken const& networkSelector = _GetMaterialNetworkSelector();
-        _GetMaterialNetworkMap(prim, networkSelector, &map, time, &timeVarying);
-
-        UsdImagingValueCache* valueCache = _GetValueCache();
-        valueCache->GetMaterialResource(cachePath) = map;
-    }
 }
 
 /* virtual */
@@ -194,6 +185,18 @@ UsdImagingMaterialAdapter::MarkMaterialDirty(
     MarkDirty(prim, cachePath, HdMaterial::DirtyResource, index);
 }
 
+/* virtual */
+VtValue
+UsdImagingMaterialAdapter::GetMaterialResource(UsdPrim const& prim, 
+                                               SdfPath const& cachePath, 
+                                               UsdTimeCode time) const
+{
+    bool timeVarying = false;
+    HdMaterialNetworkMap map;
+    TfToken const& networkSelector = _GetMaterialNetworkSelector();
+    _GetMaterialNetworkMap(prim, networkSelector, &map, time, &timeVarying);
+    return VtValue(map);
+}
 
 /* virtual */
 void
@@ -240,8 +243,7 @@ _GetPrimvarNameAttributeValue(
 
 static void
 _ExtractPrimvarsFromNode(
-    UsdShadeShader const & shadeNode,
-    HdMaterialNode const & node,
+    HdMaterialNode const& node,
     HdMaterialNetwork *materialNetwork,
     TfToken const& networkSelector)
 {
@@ -270,12 +272,14 @@ _ExtractPrimvarsFromNode(
 // NodeGraphs that can be processed once and shared, or even look for a
 // pre-baked implementation. Currently neither the material processing in Hydra
 // nor any of the back-ends (like HdPrman) can make use of this anyway.
+using _PathSet = std::unordered_set<SdfPath, SdfPath::Hash>;
+
 static
 void _WalkGraph(
     UsdShadeShader const & shadeNode,
     HdMaterialNetwork* materialNetwork,
     TfToken const& networkSelector,
-    SdfPathSet* visitedNodes,
+    _PathSet* visitedNodes,
     TfTokenVector const & shaderSourceTypes,
     UsdTimeCode time,
     bool* timeVarying)
@@ -292,6 +296,7 @@ void _WalkGraph(
     if (visitedNodes->count(node.path) > 0) {
         return;
     }
+    visitedNodes->emplace(node.path);
 
     // Visit the inputs of this node to ensure they are emitted first.
     const std::vector<UsdShadeInput> shadeNodeInputs = shadeNode.GetInputs();
@@ -323,9 +328,15 @@ void _WalkGraph(
             relationship.inputName = UsdShadeOutput(attr).GetBaseName();
             materialNetwork->relationships.push_back(relationship);
         } else if (attrType == UsdShadeAttributeType::Input) {
-            // If it is an input attribute we get the authored value
-            VtValue value;
-            if (attr.Get(&value, time)) {
+            // If it is an input attribute we get the authored value.
+            //
+            // If its type is asset and contains <UDIM>,
+            // we resolve the asset path with the udim pattern to a file
+            // path with a udim pattern, e.g.,
+            // //SHOW/myImage.<UDIM>.exr to /filePath/myImage.<UDIM>.exr.
+            const VtValue value =
+                UsdImaging_ResolveMaterialParamValue(attr, time);
+            if (!value.IsEmpty()) {
                 node.parameters[inputName] = value;
             }
 
@@ -354,13 +365,10 @@ void _WalkGraph(
         // the number of primvars send to the render delegate. We extract the
         // primvar names from the material node to ensure these primvars are
         // not filtered-out by GprimAdapter.
+        _ExtractPrimvarsFromNode(node, materialNetwork, networkSelector);
+    }
 
-        _ExtractPrimvarsFromNode(
-            shadeNode, node, materialNetwork, networkSelector);
-    } 
-    
     materialNetwork->nodes.push_back(node);
-    visitedNodes->emplace(node.path);
 }
 
 static void
@@ -375,7 +383,7 @@ _BuildHdMaterialNetworkFromTerminal(
 {
     HdMaterialNetwork& network = materialNetworkMap->map[terminalIdentifier];
     std::vector<HdMaterialNode>& nodes = network.nodes;
-    SdfPathSet visitedNodes;
+    _PathSet visitedNodes;
 
     _WalkGraph(
         usdTerminal,
@@ -421,6 +429,10 @@ UsdImagingMaterialAdapter::_GetMaterialNetworkMap(
                          usdPrim.GetTypeName().GetText());
         return;
     }
+
+    // Bind the usd stage's resolver context for correct asset resolution.
+    ArResolverContextBinder binder(usdPrim.GetStage()->GetPathResolverContext());
+    ArResolverScopedCache resolverCache;
 
     const TfToken context = _GetMaterialNetworkSelector();
     TfTokenVector shaderSourceTypes = _GetShaderSourceTypes();

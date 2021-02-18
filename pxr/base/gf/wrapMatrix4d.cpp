@@ -102,7 +102,8 @@ getsegcount(PyObject *self, Py_ssize_t *lenp) {
 // Python's getcharbuf interface function.
 static Py_ssize_t
 getcharbuf(PyObject *self, Py_ssize_t segment, const char **ptrptr) {
-    return getreadbuf(self, segment, (void **) ptrptr);
+    PyErr_SetString(PyExc_ValueError, "cannot treat binary data as text");
+    return -1;
 }
 #endif
 
@@ -249,6 +250,13 @@ static bool __contains__vector( const GfMatrix4d &self, GfVec4d value ) {
 	    return true;
     return false;
 }
+
+#if PY_MAJOR_VERSION == 2
+static GfMatrix4d __truediv__(const GfMatrix4d &self, GfMatrix4d value)
+{
+    return self / value;
+}
+#endif
 
 static GfMatrix4d *__init__() {
     // Default constructor produces identity from python.
@@ -411,6 +419,12 @@ void wrapMatrix4d()
         .def( GfVec4d() * self )
         .def( self * GfVec4f() )
         .def( GfVec4f() * self )
+
+#if PY_MAJOR_VERSION == 2
+        // Needed only to support "from __future__ import division" in
+        // python 2. In python 3 builds boost::python adds this for us.
+        .def("__truediv__", __truediv__ )
+#endif
 
         .def("SetTransform",
 	     (This & (This::*)( const GfRotation &,

@@ -118,7 +118,7 @@ UsdImagingIndexProxy::_RemoveDependencies(SdfPath const& cachePath)
 }
 
 void
-UsdImagingIndexProxy::_RemovePrimInfoDependency(SdfPath const& cachePath)
+UsdImagingIndexProxy::RemovePrimInfoDependency(SdfPath const& cachePath)
 {
     // This one doesn't go through ProcessRemovals...  It's intended to be
     // called right after _AddHdPrimInfo, to reverse the dependency that
@@ -152,9 +152,7 @@ UsdImagingIndexProxy::AddDependency(SdfPath const& cachePath,
     }
 
     SdfPath usdPath = usdPrim.GetPath();
-    if (std::find(primInfo->extraDependencies.cbegin(),
-                  primInfo->extraDependencies.cend(),
-                  usdPath) != primInfo->extraDependencies.cend()) {
+    if (primInfo->extraDependencies.count(usdPath) != 0) {
         // XXX: Ideally, we'd TF_VERIFY here, but usd resyncs can
         // sometimes cause double-inserts (see _AddHdPrimInfo), so we need to
         // silently guard against this.
@@ -163,7 +161,7 @@ UsdImagingIndexProxy::AddDependency(SdfPath const& cachePath,
 
     _delegate->_dependencyInfo.insert(
         UsdImagingDelegate::_DependencyMap::value_type(usdPath, cachePath));
-    primInfo->extraDependencies.push_back(usdPath);
+    primInfo->extraDependencies.insert(usdPath);
 
     TF_DEBUG(USDIMAGING_CHANGES).Msg("[Add dependency] <%s> -> <%s>\n",
         usdPath.GetText(), cachePath.GetText());
@@ -173,14 +171,12 @@ void
 UsdImagingIndexProxy::InsertRprim(
                              TfToken const& primType,
                              SdfPath const& cachePath,
-                             SdfPath const& parentPath,
                              UsdPrim const& usdPrim,
                              UsdImagingPrimAdapterSharedPtr adapter)
 {
     if (_AddHdPrimInfo(cachePath, usdPrim, adapter)) {
         _delegate->GetRenderIndex().InsertRprim(primType, _delegate,
-            _delegate->ConvertCachePathToIndexPath(cachePath),
-            _delegate->ConvertCachePathToIndexPath(parentPath));
+            _delegate->ConvertCachePathToIndexPath(cachePath));
 
         _AddTask(cachePath);
     }
@@ -219,20 +215,18 @@ UsdImagingIndexProxy::InsertBprim(
 void
 UsdImagingIndexProxy::InsertInstancer(
                              SdfPath const& cachePath,
-                             SdfPath const& parentPath,
                              UsdPrim const& usdPrim,
                              UsdImagingPrimAdapterSharedPtr adapter)
 {
     if (_AddHdPrimInfo(cachePath, usdPrim, adapter)) {
         _delegate->GetRenderIndex().InsertInstancer(_delegate,
-            _delegate->ConvertCachePathToIndexPath(cachePath),
-            _delegate->ConvertCachePathToIndexPath(parentPath));
+            _delegate->ConvertCachePathToIndexPath(cachePath));
 
         _delegate->_instancerPrimCachePaths.insert(cachePath);
 
         TF_DEBUG(USDIMAGING_INSTANCER).Msg(
-            "[Instancer Inserted] %s, parent = %s, adapter = %s\n",
-            cachePath.GetText(), parentPath.GetText(),
+            "[Instancer Inserted] %s, adapter = %s\n",
+            cachePath.GetText(),
             adapter ? TfType::GetCanonicalTypeName(typeid(*adapter)).c_str()
                     : "none");
 
@@ -412,6 +406,12 @@ UsdImagingIndexProxy::_ProcessRemovals()
         _bprimsToRemove.clear();
     }
 
+    // If we're removing hdPrimInfo entries, we need to rebuild the
+    // time-varying cache.
+    if (_hdPrimInfoToRemove.size() > 0) {
+        _delegate->_timeVaryingPrimCacheValid = false;
+    }
+
     {
         TRACE_FUNCTION_SCOPE("primInfo");
         TF_FOR_ALL(it, _hdPrimInfoToRemove) {
@@ -421,7 +421,7 @@ UsdImagingIndexProxy::_ProcessRemovals()
                                              cachePath.GetText());
 
 
-            _delegate->_valueCache.Clear(cachePath);
+            _delegate->_primvarDescCache.Clear(cachePath);
             _delegate->_refineLevelMap.erase(cachePath);
             _delegate->_pickablesMap.erase(cachePath);
 

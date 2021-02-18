@@ -38,7 +38,7 @@
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/task.h"
 
-#include "pxr/imaging/cameraUtil/conformWindow.h"
+#include "pxr/imaging/cameraUtil/framing.h"
 #include "pxr/imaging/glf/simpleLightingContext.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/base/tf/staticTokens.h"
@@ -51,7 +51,8 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 class HdRenderBuffer;
 
-class HdxTaskController {
+class HdxTaskController final
+{
 public:
     HDX_API
     HdxTaskController(HdRenderIndex *renderIndex,
@@ -143,15 +144,42 @@ public:
     /// -------------------------------------------------------
     /// Camera and Framing API
     
-    /// Set the viewport param on tasks.
+    /// Set the size of the render buffers baking the AOVs.
+    /// GUI applications should set this to the size of the window.
+    ///
     HDX_API
-    void SetRenderViewport(GfVec4d const& viewport);
+    void SetRenderBufferSize(const GfVec2i &size);
+
+    /// Determines how the filmback of the camera is mapped into
+    /// the pixels of the render buffer and what pixels of the render
+    /// buffer will be rendered into.
+    HDX_API
+    void SetFraming(const CameraUtilFraming &framing);
+
+    /// Specifies whether to force a window policy when conforming
+    /// the frustum of the camera to match the display window of
+    /// the camera framing.
+    ///
+    /// If set to {false, ...}, the window policy of the specified camera
+    /// will be used.
+    ///
+    /// Note: std::pair<bool, ...> is used instead of std::optional<...>
+    /// because the latter is only available in C++17 or later.
+    HDX_API
+    void SetOverrideWindowPolicy(
+        const std::pair<bool, CameraUtilConformWindowPolicy> &policy);
 
     /// -- Scene camera --
     /// Set the camera param on tasks to a USD camera path.
     HDX_API
     void SetCameraPath(SdfPath const& id);
-    
+
+    /// Set the viewport param on tasks.
+    ///
+    /// \deprecated Use SetFraming and SetRenderBufferSize instead.
+    HDX_API
+    void SetRenderViewport(GfVec4d const& viewport);
+
     /// -- Free camera --
     /// Set the view and projection matrices for the free camera.
     /// Note: The projection matrix must be pre-adjusted for the window policy.
@@ -212,20 +240,13 @@ public:
     void SetColorCorrectionParams(HdxColorCorrectionTaskParams const& params);
 
     /// -------------------------------------------------------
-    /// Color Channel API
+    /// Present API
 
-    /// Configure color channel by settings params.
+    /// Enable / disable presenting the render to bound framebuffer.
+    /// An application may choose to manage the AOVs that are rendered into
+    /// itself and skip the task controller's presentation.
     HDX_API
-    void SetColorChannelParams(HdxColorChannelTaskParams const& params);
-
-    /// -------------------------------------------------------
-    /// Colorize API
-
-    /// Turns the colorize task color quantization on or off.
-    /// XXX: This is a temporary function that will be soon deprecated. Please
-    //       avoid calling it.
-    HDX_API
-    void SetColorizeQuantizationEnabled(bool enabled);
+    void SetEnablePresentation(bool enabled);
 
 private:
     ///
@@ -247,16 +268,16 @@ private:
     SdfPath _CreateRenderTask(TfToken const& materialTag);
     void _CreateOitResolveTask();
     void _CreateSelectionTask();
-    void _CreateColorizeTask();
     void _CreateColorizeSelectionTask();
     void _CreateColorCorrectionTask();
-    void _CreateColorChannelTask();
     void _CreatePickTask();
     void _CreatePickFromRenderBufferTask();
-    SdfPath _CreateAovResolveTask(TfToken const& aovName);
+    void _CreateAovInputTask();
     void _CreatePresentTask();
 
     void _SetCameraParamForTasks(SdfPath const& id);
+    void _SetCameraFramingForTasks();
+    void _UpdateAovDimensions(GfVec2i const& dimensions);
 
     void _SetBlendStateForMaterialTag(TfToken const& materialTag,
                                       HdxRenderTaskParams *renderParams) const;
@@ -266,18 +287,15 @@ private:
     bool _SelectionEnabled() const;
     bool _ColorizeSelectionEnabled() const;
     bool _ColorCorrectionEnabled() const;
-    bool _ColorChannelEnabled() const;
     bool _ColorizeQuantizationEnabled() const;
     bool _AovsSupported() const;
     bool _CamerasSupported() const;
+    bool _UsingAovs() const;
 
     // Helper function for renderbuffer management.
     SdfPath _GetRenderTaskPath(TfToken const& materialTag) const;
     SdfPath _GetAovPath(TfToken const& aov) const;
     SdfPathVector _GetAovEnabledTasks() const;
-
-    // Helper function to load the default domeLight texture
-    void _LoadDefaultDomeLightTexture();
 
     // Helper function to set the parameters of a light, get a particular light 
     // in the scene, replace and remove Sprims from the scene 
@@ -348,16 +366,13 @@ private:
     SdfPath _simpleLightTaskId;
     SdfPath _shadowTaskId;
     SdfPathVector _renderTaskIds;
+    SdfPath _aovInputTaskId;
     SdfPath _oitResolveTaskId;
     SdfPath _selectionTaskId;
     SdfPath _colorizeSelectionTaskId;
-    SdfPath _colorizeTaskId;
     SdfPath _colorCorrectionTaskId;
-    SdfPath _colorChannelTaskId;
     SdfPath _pickTaskId;
     SdfPath _pickFromRenderBufferTaskId;
-    SdfPath _aovColorResolveTaskId;
-    SdfPath _aovDepthResolveTaskId;
     SdfPath _presentTaskId;
 
     // Generated camera (for the default/free cam)
@@ -367,12 +382,17 @@ private:
     
     // Built-in lights
     SdfPathVector _lightIds;
-    HdTextureResourceSharedPtr _defaultDomeLightTextureResource;
 
     // Generated renderbuffers
     SdfPathVector _aovBufferIds;
     TfTokenVector _aovOutputs;
     TfToken _viewportAov;
+
+    GfVec2i _renderBufferSize;
+    CameraUtilFraming _framing;
+    std::pair<bool, CameraUtilConformWindowPolicy> _overrideWindowPolicy;
+
+    GfVec4d _viewport;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

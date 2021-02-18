@@ -69,6 +69,16 @@ static bool _WrapIsCollectionAPIPath(const SdfPath &path) {
         path, &collectionName);
 }
 
+static std::string
+_Repr(const UsdCollectionAPI &self)
+{
+    std::string primRepr = TfPyRepr(self.GetPrim());
+    std::string instanceName = self.GetName();
+    return TfStringPrintf(
+        "Usd.CollectionAPI(%s, '%s')",
+        primRepr.c_str(), instanceName.c_str());
+}
+
 } // anonymous namespace
 
 void wrapUsdCollectionAPI()
@@ -94,6 +104,9 @@ void wrapUsdCollectionAPI()
                &This::Get,
             (arg("prim"), arg("name")))
         .staticmethod("Get")
+
+        .def("Apply", &This::Apply, (arg("prim"), arg("name")))
+        .staticmethod("Apply")
 
         .def("GetSchemaAttributeNames",
              &This::GetSchemaAttributeNames,
@@ -135,6 +148,7 @@ void wrapUsdCollectionAPI()
              &This::CreateExcludesRel)
         .def("IsCollectionAPIPath", _WrapIsCollectionAPIPath)
             .staticmethod("IsCollectionAPIPath")
+        .def("__repr__", ::_Repr)
     ;
 
     _CustomWrapCode(cls);
@@ -184,11 +198,6 @@ WRAP_CUSTOM {
     scope collectionAPI = _class 
         .def(init<UsdPrim, TfToken>())
 
-        .def("ApplyCollection", &This::ApplyCollection, 
-             (arg("prim"), arg("name"), 
-              arg("expansionRule")=UsdTokens->expandPrims))
-            .staticmethod("ApplyCollection")
-
         .def("GetCollection", 
              (UsdCollectionAPI(*)(const UsdPrim &prim, 
                                   const TfToken &name))
@@ -237,6 +246,10 @@ WRAP_CUSTOM {
               arg("predicate")=UsdPrimDefaultPredicate),
              return_value_policy<TfPySequenceToList>())
              .staticmethod("ComputeIncludedPaths")
+
+        .def("CanContainPropertyName", 
+                This::CanContainPropertyName, arg("name"))
+        .staticmethod("CanContainPropertyName")
 
         .def("ResetCollection", &This::ResetCollection)
         .def("BlockCollection", &This::BlockCollection)

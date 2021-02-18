@@ -21,10 +21,9 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include "pxr/imaging/glf/glew.h"
-
 #include "pxr/imaging/hdSt/codeGen.h"
 #include "pxr/imaging/hdSt/commandBuffer.h"
+#include "pxr/imaging/hdSt/debugCodes.h"
 #include "pxr/imaging/hdSt/drawBatch.h"
 #include "pxr/imaging/hdSt/geometricShader.h"
 #include "pxr/imaging/hdSt/glslfxShader.h"
@@ -141,6 +140,8 @@ HdSt_DrawBatch::_IsAggregated(HdStDrawItem const *drawItem0,
                          drawItem1->GetTopologyVisibilityRange())
         && isAggregated(drawItem0->GetVertexPrimvarRange(),
                          drawItem1->GetVertexPrimvarRange())
+        && isAggregated(drawItem0->GetVaryingPrimvarRange(),
+                         drawItem1->GetVaryingPrimvarRange())
         && isAggregated(drawItem0->GetElementPrimvarRange(),
                          drawItem1->GetElementPrimvarRange())
         && isAggregated(drawItem0->GetFaceVaryingPrimvarRange(),
@@ -188,9 +189,14 @@ HdSt_DrawBatch::Rebuild()
             return false;
         }
         if (!Append(item)) {
+            TF_DEBUG(HDST_DRAW_BATCH).Msg("   Rebuild failed for batch %p\n",
+            (void*)(this));
             return false;
         }
     }
+
+    TF_DEBUG(HDST_DRAW_BATCH).Msg("   Rebuild success for batch %p\n",
+        (void*)(this));
 
     return true;
 }
@@ -249,8 +255,6 @@ HdSt_DrawBatch::_GetDrawingProgram(HdStRenderPassStateSharedPtr const &state,
             // code is broken and needs to be fixed.  When we open up more
             // shaders for customization, we will need to check them as well.
             
-            typedef boost::shared_ptr<class HioGlslfx> HioGlslfxSharedPtr;
-
             HioGlslfxSharedPtr glslSurfaceFallback = 
                 HioGlslfxSharedPtr(
                         new HioGlslfx(HdStPackageFallbackSurfaceShader()));
@@ -283,11 +287,6 @@ HdSt_DrawBatch::_DrawingProgram::CompileShader(
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
 
-    // glew has to be initialized
-    if (!glLinkProgram) {
-        return false;
-    }
-
     if (!_geometricShader) {
         TF_CODING_ERROR("Can not compile a shader without a geometric shader");
         return false;
@@ -305,7 +304,7 @@ HdSt_DrawBatch::_DrawingProgram::CompileShader(
         (*it)->AddBindings(&customBindings);
     }
 
-    HdSt_CodeGen codeGen(_geometricShader, shaders);
+    HdSt_CodeGen codeGen(_geometricShader, shaders, drawItem->GetMaterialTag());
 
     // let resourcebinder resolve bindings and populate metadata
     // which is owned by codegen.
@@ -324,7 +323,8 @@ HdSt_DrawBatch::_DrawingProgram::CompileShader(
                                 resourceRegistry->RegisterGLSLProgram(hash);
 
         if (programInstance.IsFirstInstance()) {
-            HdStGLSLProgramSharedPtr glslProgram = codeGen.Compile();
+            HdStGLSLProgramSharedPtr glslProgram = codeGen.Compile(
+                resourceRegistry.get());
             if (glslProgram && _Link(glslProgram)) {
                 // store the program into the program registry.
                 programInstance.SetValue(glslProgram);

@@ -24,6 +24,8 @@
 #include "pxr/imaging/hd/bufferSpec.h"
 #include "pxr/imaging/hd/perfLog.h"
 
+#include "pxr/base/tf/hash.h"
+
 #include <iostream>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -77,6 +79,12 @@ HdBufferSpec::ComputeDifference(HdBufferSpecVector const &specs1,
     }
 
     return HdBufferSpecVector(set.begin(), set.end());
+}
+
+size_t
+HdBufferSpec::Hash() const
+{
+    return TfHash()(*this);
 }
 
 void

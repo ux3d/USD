@@ -28,9 +28,8 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-
-HdBufferArrayRange::~HdBufferArrayRange() {
-}
+HdBufferArrayRange::HdBufferArrayRange() = default;
+HdBufferArrayRange::~HdBufferArrayRange() = default;
 
 std::ostream &operator <<(std::ostream &out,
                           const HdBufferArrayRange &self)
@@ -68,6 +67,21 @@ HdBufferArrayRangeContainer::Get(int index) const
         return empty;
     }
     return _ranges[index];
+}
+
+void
+HdBufferArrayRangeContainer::Resize(int size)
+{
+    HD_TRACE_FUNCTION();
+
+    if (size < 0) {
+        TF_CODING_ERROR("Size negative in "
+            "HdBufferArrayRangeContainer::Resize()");
+        return;
+    }
+
+    HD_PERF_COUNTER_INCR(HdPerfTokens->bufferArrayRangeContainerResized);
+    _ranges.resize(size);
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

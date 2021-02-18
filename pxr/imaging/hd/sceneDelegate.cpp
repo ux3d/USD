@@ -238,6 +238,13 @@ HdSceneDelegate::GetInstancerTransform(SdfPath const &instancerId)
 }
 
 /*virtual*/
+SdfPath
+HdSceneDelegate::GetInstancerId(SdfPath const& primId)
+{
+    return SdfPath();
+}
+
+/*virtual*/
 size_t
 HdSceneDelegate::SampleInstancerTransform(SdfPath const &instancerId,
                                           size_t maxSampleCount,
@@ -255,9 +262,10 @@ HdSceneDelegate::SampleInstancerTransform(SdfPath const &instancerId,
 /*virtual*/
 SdfPath
 HdSceneDelegate::GetScenePrimPath(SdfPath const& rprimId,
-                                  int instanceIndex)
+                                  int instanceIndex,
+                                  HdInstancerContext *instancerContext)
 {
-    return rprimId;
+    return rprimId.ReplacePrefix(_delegateID, SdfPath::AbsoluteRootPath());
 }
 
 
@@ -278,24 +286,6 @@ VtValue
 HdSceneDelegate::GetMaterialResource(SdfPath const &materialId)
 {
     return VtValue();
-}
-
-// -----------------------------------------------------------------------//
-/// \name Texture Aspects
-// -----------------------------------------------------------------------//
-
-/*virtual*/
-HdTextureResource::ID
-HdSceneDelegate::GetTextureResourceID(SdfPath const& textureId)
-{
-    return HdTextureResource::ID();
-}
-
-/*virtual*/
-HdTextureResourceSharedPtr
-HdSceneDelegate::GetTextureResource(SdfPath const& textureId)
-{
-    return HdTextureResourceSharedPtr();
 }
 
 // -----------------------------------------------------------------------//

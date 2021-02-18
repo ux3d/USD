@@ -1,9 +1,10 @@
 trigger:
-- master
+- release
 - dev
 
 jobs:
 - job: Linux
+  timeoutInMinutes: 90
   pool:
     vmImage: 'Ubuntu-18.04'
   steps:
@@ -22,12 +23,15 @@ jobs:
       targetPath: "/home/vsts/USDinst"
 
 - job: macOS
+  timeoutInMinutes: 90
   pool:
     vmImage: 'macOS-10.14'
   steps:
   - script: |
       # The SYSTEM env var is used by the Makefile of glew and having it set trips it up
       unset SYSTEM
+      # Update PATH to ensure that pyside2-uic can be found
+      export PATH=/Library/Frameworks/Python.framework/Versions/2.7/bin:$PATH
       /bin/bash -c "sudo xcode-select -s /Applications/Xcode_10.1.app/Contents/Developer"
       sudo pip install pyside2 ;
       sudo pip install PyOpenGL ;
@@ -45,7 +49,7 @@ jobs:
   steps:
   - script: |
       call C:\"Program Files (x86)"\"Microsoft Visual Studio"\2017\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-      call set PYTHONLOCATION=C:\hostedtoolcache\windows\Python\2.7.17\x64
+      call set PYTHONLOCATION=C:\hostedtoolcache\windows\Python\2.7.18\x64
       call set PYTHONBIN=%PYTHONLOCATION%\python.exe
       call set PATH=%PYTHONLOCATION%;%PYTHONLOCATION%\Scripts;%PATH%
       call set BOOST_ROOT=

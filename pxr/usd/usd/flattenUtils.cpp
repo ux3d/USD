@@ -162,16 +162,10 @@ _Reduce(const VtValue &lhs, const VtValue &rhs, const TfToken &field)
         // if the weaker value is a block, return the stronger value.
         return lhs;
     }
-    // The remaining cases handle type-specific behavior and require
-    // that the types match.
     if (lhs.GetType() != rhs.GetType()) {
-        // As long as the caller observes the SdfLayer schema, this
-        // should never happen.
-        TF_CODING_ERROR("UsdFlattenLayerStack: Cannot reduce "
-                        "type '%s' with type '%s'",
-                        lhs.GetType().GetTypeName().c_str(),
-                        rhs.GetType().GetTypeName().c_str());
-        return VtValue();
+        // If the types do not match, there is no reduction rule for
+        // combining them, so just use the stronger value.
+        return lhs;
     }
 
     // Dispatch to type-specific reduce / compose rules.
@@ -246,32 +240,15 @@ _ApplyLayerOffset(const SdfLayerOffset &offset,
         return;
     }
 
-    if (field == UsdTokens->clipActive ||
-        field == UsdTokens->clipTimes) {
-        if (val->IsHolding<VtVec2dArray>()) {
-            VtVec2dArray entries = val->UncheckedGet<VtVec2dArray>();
-            for (auto &entry: entries) {
-                entry[0] = offset * entry[0];
-            }
-            val->Swap(entries);
-        }
-    }
-    else if (field == UsdTokens->clipTemplateStartTime ||
-             field == UsdTokens->clipTemplateEndTime) {
-        if (val->IsHolding<double>()) {
-            double time = offset * val->UncheckedGet<double>();
-            val->Swap(time);
-        }
-    }
-    else if (field == UsdTokens->clips) {
+    if (field == UsdTokens->clips) {
         if (val->IsHolding<VtDictionary>()) {
             VtDictionary clips = val->UncheckedGet<VtDictionary>();
             for (auto &entry: clips) {
-                const std::string& clipSetName = entry.first;
                 VtValue& clipInfoVal = entry.second;
                 if (!clipInfoVal.IsHolding<VtDictionary>()) {
-                    TF_WARN("Expected dictionary for entry '%s' in 'clips'",
-                            clipSetName.c_str());
+                    // No point is adding a warning here, as if we hit this
+                    // condition here, we will also hit it in _FixAssetPaths
+                    // which will generate the warning.
                     continue;
                 }
                 VtDictionary clipInfo =
@@ -325,22 +302,66 @@ _FixAssetPaths(const SdfLayerHandle &sourceLayer,
                const UsdFlattenResolveAssetPathFn& resolveAssetPathFn,
                VtValue *val)
 {
+    static auto updateAssetPathFn = [](
+        const SdfLayerHandle &sourceLayer,
+        const UsdFlattenResolveAssetPathFn& resolveAssetPathFn,
+        VtValue &val) {
+            SdfAssetPath ap;
+            val.Swap(ap);
+            ap = SdfAssetPath(
+                    resolveAssetPathFn(sourceLayer, ap.GetAssetPath()));
+            val.Swap(ap);
+        };
+    static auto updateAssetPathArrayFn = [](
+        const SdfLayerHandle &sourceLayer,
+        const UsdFlattenResolveAssetPathFn& resolveAssetPathFn,
+        VtValue &val) {
+            VtArray<SdfAssetPath> a;
+            val.Swap(a);
+            for (SdfAssetPath &ap: a) {
+                ap = SdfAssetPath(
+                        resolveAssetPathFn(sourceLayer, ap.GetAssetPath()));
+            }
+            val.Swap(a);
+        };
+
     if (val->IsHolding<SdfAssetPath>()) {
-        SdfAssetPath ap;
-        val->Swap(ap);
-        ap = SdfAssetPath(resolveAssetPathFn(sourceLayer, ap.GetAssetPath()));
-        val->Swap(ap);
+        updateAssetPathFn(sourceLayer, resolveAssetPathFn, *val);
         return;
     }
     else if (val->IsHolding<VtArray<SdfAssetPath>>()) {
-        VtArray<SdfAssetPath> a;
-        val->Swap(a);
-        for (SdfAssetPath &ap: a) {
-            ap = SdfAssetPath(
-                    resolveAssetPathFn(sourceLayer, ap.GetAssetPath()));
-        }
-        val->Swap(a);
+        updateAssetPathArrayFn(sourceLayer, resolveAssetPathFn, *val);
         return;
+    }
+    else if (val->IsHolding<SdfTimeSampleMap>()) {
+        const SdfTimeSampleMap &tsmc = val->UncheckedGet<SdfTimeSampleMap>();
+        if (!tsmc.empty()) {
+            // Quick test that the first entry of the time sample map is
+            // holding either an asset path or an array of asset paths.
+            bool holdingAssetPath = 
+                tsmc.begin()->second.IsHolding<SdfAssetPath>();
+            bool holdingAssetPathArray = 
+                tsmc.begin()->second.IsHolding<VtArray<SdfAssetPath>>();
+            if (holdingAssetPath || holdingAssetPathArray) {
+                SdfTimeSampleMap tsmap;
+                val->Swap(tsmap);
+                // Go through each time sampled value and execute the resolve
+                // function on each asset path (or array of asset paths).
+                if (holdingAssetPath) {
+                    for (auto &ts : tsmap) {
+                        updateAssetPathFn(
+                            sourceLayer, resolveAssetPathFn, ts.second);
+                    }
+                }
+                else { // holdingAssetPathArray must be true
+                    for (auto &ts : tsmap) {
+                        updateAssetPathArrayFn(
+                            sourceLayer, resolveAssetPathFn, ts.second);
+                    }
+                }
+                val->Swap(tsmap);
+            }
+        }
     }
     else if (val->IsHolding<SdfReference>()) {
         SdfReference ref;
@@ -371,6 +392,39 @@ _FixAssetPaths(const SdfLayerHandle &sourceLayer,
                     resolveAssetPathFn, sourceLayer, std::placeholders::_1));
         val->Swap(pls);
         return;
+    }
+    else if (field == UsdTokens->clips) {
+        if (val->IsHolding<VtDictionary>()) {
+            VtDictionary clips = val->UncheckedGet<VtDictionary>();
+            for (auto &entry: clips) {
+                const std::string& clipSetName = entry.first;
+                VtValue& clipInfoVal = entry.second;
+                if (!clipInfoVal.IsHolding<VtDictionary>()) {
+                    TF_WARN("Expected dictionary for entry '%s' in 'clips'",
+                            clipSetName.c_str());
+                    continue;
+                }
+                VtDictionary clipInfo =
+                    clipInfoVal.UncheckedGet<VtDictionary>();
+                VtValue* v;
+                v = TfMapLookupPtr(clipInfo,
+                    UsdClipsAPIInfoKeys->assetPaths);
+                if (v && v->IsHolding<VtArray<SdfAssetPath>>()) {
+                    _FixAssetPaths(sourceLayer,
+                        UsdClipsAPIInfoKeys->assetPaths,
+                        resolveAssetPathFn, v);
+                }
+                v = TfMapLookupPtr(clipInfo,
+                    UsdClipsAPIInfoKeys->manifestAssetPath);
+                if (v && v->IsHolding<SdfAssetPath>()) {
+                    _FixAssetPaths(sourceLayer,
+                        UsdClipsAPIInfoKeys->manifestAssetPath,
+                        resolveAssetPathFn, v);
+                }
+                clipInfoVal = VtValue(clipInfo);
+            }
+            val->Swap(clips);
+        }
     }
 }
 

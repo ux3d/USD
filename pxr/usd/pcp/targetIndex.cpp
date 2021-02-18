@@ -327,7 +327,8 @@ _PathTranslateCallback(
     const SdfPath& inPath,
     const SdfPropertySpecHandle& owningProp,
     const SdfSpecType relOrAttrType,
-    PcpCache* cacheForValidation, 
+    PcpCache* cacheForValidation,
+    SdfPathVector *deletedPaths,
     PcpErrorVector* targetPathErrors,
     PcpErrorVector* otherErrors)
 {
@@ -345,6 +346,9 @@ _PathTranslateCallback(
     // in PcpBuildFilteredTargetIndex.
     if (opType == SdfListOpTypeDeleted) {
         if (pathIsMappable && !translatedPath.IsEmpty()) {
+            if (deletedPaths) {
+                deletedPaths->push_back(translatedPath);
+            }
             _RemoveTargetPathErrorsForPath(translatedPath, targetPathErrors);
             return translatedPath;
         }
@@ -443,6 +447,7 @@ PcpBuildFilteredTargetIndex(
     const bool includeStopProperty,
     PcpCache *cacheForValidation,
     PcpTargetIndex *targetIndex,
+    SdfPathVector *deletedPaths,
     PcpErrorVector *allErrors)
 {
     TRACE_FUNCTION();
@@ -480,6 +485,7 @@ PcpBuildFilteredTargetIndex(
 
     SdfPathVector paths;
     PcpErrorVector targetPathErrors;
+    bool hasTargetOpinions = false;
 
     // Walk the property stack from weakest to strongest, applying path list 
     // operations with the appropriate path translations to targetPaths.
@@ -496,6 +502,7 @@ PcpBuildFilteredTargetIndex(
         const SdfPathListOp& pathListOps =
             pathValue.UncheckedGet<SdfPathListOp>();
         if (pathListOps.HasKeys()) {
+            hasTargetOpinions = true;
 
             // If this list op is explicit, its contents will overwrite
             // everything we've composed up to this point. Because of this,
@@ -503,6 +510,9 @@ PcpBuildFilteredTargetIndex(
             // since the errorneous paths are being overridden.
             if (pathListOps.IsExplicit()) {
                 targetPathErrors.clear();
+                if (deletedPaths) {
+                    deletedPaths->clear();
+                }
             }
 
             SdfPathListOp::ApplyCallback pathTranslationCallback = 
@@ -511,6 +521,7 @@ PcpBuildFilteredTargetIndex(
                           propIt.base().GetNode(), std::placeholders::_2,
                           std::ref(property), relOrAttrType,
                           cacheForValidation, 
+                          deletedPaths,
                           &targetPathErrors, allErrors);
             pathListOps.ApplyOperations(&paths, pathTranslationCallback);
         }
@@ -524,6 +535,7 @@ PcpBuildFilteredTargetIndex(
 
     targetIndex->paths.swap(paths);
     targetIndex->localErrors.swap(targetPathErrors);
+    targetIndex->hasTargetOpinions = hasTargetOpinions;
 }
 
 void
@@ -540,7 +552,9 @@ PcpBuildTargetIndex(
         /* stopProperty = */ SdfSpecHandle(),
         /* includeStopProperty = */ false,
         /* cacheForValidation = */ 0,
-        targetIndex, allErrors );
+        targetIndex,
+        /* deletedPaths = */ nullptr,
+        allErrors);
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

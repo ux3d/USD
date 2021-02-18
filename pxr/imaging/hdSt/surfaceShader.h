@@ -28,16 +28,11 @@
 #include "pxr/imaging/hdSt/api.h"
 #include "pxr/imaging/hd/version.h"
 #include "pxr/imaging/hdSt/shaderCode.h"
-#include "pxr/imaging/hd/bufferSource.h"
-
-#include "pxr/imaging/garch/gl.h"
 
 #include "pxr/usd/sdf/path.h"
 
 #include "pxr/base/vt/value.h"
 #include "pxr/base/tf/token.h"
-
-#include <boost/shared_ptr.hpp>
 
 #include <memory>
 #include <vector>
@@ -49,8 +44,9 @@ class HdSceneDelegate;
 
 using HdBufferArrayRangeSharedPtr = std::shared_ptr<class HdBufferArrayRange>;
 
-typedef boost::shared_ptr<class HdStSurfaceShader> HdStSurfaceShaderSharedPtr;
+using HdStSurfaceShaderSharedPtr = std::shared_ptr<class HdStSurfaceShader>;
 
+using HdBufferSpecVector = std::vector<struct HdBufferSpec>;
 using HdStResourceRegistrySharedPtr = 
     std::shared_ptr<class HdStResourceRegistry>;
 
@@ -74,36 +70,37 @@ public:
     /// \name HdShader Virtual Interface                                      //
     // ---------------------------------------------------------------------- //
     HDST_API
-    virtual std::string GetSource(TfToken const &shaderStageKey) const override;
+    std::string GetSource(TfToken const &shaderStageKey) const override;
     HDST_API
-    virtual HdSt_MaterialParamVector const& GetParams() const override;
+    HdSt_MaterialParamVector const& GetParams() const override;
     HDST_API
     void SetEnabledPrimvarFiltering(bool enabled);
     HDST_API
-    virtual bool IsEnabledPrimvarFiltering() const override;
+    bool IsEnabledPrimvarFiltering() const override;
     HDST_API
-    virtual TfTokenVector const& GetPrimvarNames() const override;
+    TfTokenVector const& GetPrimvarNames() const override;
     HDST_API
-    virtual HdBufferArrayRangeSharedPtr const& GetShaderData() const override;
+    HdBufferArrayRangeSharedPtr const& GetShaderData() const override;
     HDST_API
-    virtual TextureDescriptorVector GetTextures() const override;
+    NamedTextureHandleVector const & GetNamedTextureHandles() const override;
     HDST_API
-    virtual void BindResources(int program,
-                               HdSt_ResourceBinder const &binder,
-                               HdRenderPassState const &state) override;
+    void BindResources(int program,
+                       HdSt_ResourceBinder const &binder,
+                       HdRenderPassState const &state) override;
     HDST_API
-    virtual void UnbindResources(int program,
-                                 HdSt_ResourceBinder const &binder,
-                                 
-                                 HdRenderPassState const &state) override;
+    void UnbindResources(int program,
+                         HdSt_ResourceBinder const &binder,
+                         HdRenderPassState const &state) override;
     HDST_API
-    virtual void AddBindings(HdBindingRequestVector *customBindings) override;
+    void AddBindings(HdBindingRequestVector *customBindings) override;
     HDST_API
-    virtual ID ComputeHash() const override;
+    ID ComputeHash() const override;
 
     HDST_API
-    virtual TfToken GetMaterialTag() const override;
+    ID ComputeTextureSourceHash() const override;
 
+    HDST_API
+    TfToken GetMaterialTag() const override;
 
     /// Setter method for prim
     HDST_API
@@ -113,11 +110,22 @@ public:
     HDST_API
     void SetParams(const HdSt_MaterialParamVector &params);
     HDST_API
-    void SetTextureDescriptors(const TextureDescriptorVector &texDesc);
+    void SetNamedTextureHandles(const NamedTextureHandleVector &);
     HDST_API
     void SetBufferSources(
-        HdBufferSourceSharedPtrVector &bufferSources, 
+        HdBufferSpecVector const &bufferSpecs,
+        HdBufferSourceSharedPtrVector &&bufferSources, 
         HdStResourceRegistrySharedPtr const &resourceRegistry);
+
+    /// Called after textures have been committed.
+    ///
+    /// Shader can return buffer sources for different BARs (most
+    /// likely, the shader bar) that require texture metadata such as
+    /// the bindless texture handle which is only available after the
+    /// commit.
+    ///
+    HDST_API
+    void AddResourcesFromTextures(ResourceContext &ctx) const override;
 
     HDST_API
     void SetMaterialTag(TfToken const &materialTag);
@@ -131,12 +139,24 @@ public:
     static bool CanAggregate(HdStShaderCodeSharedPtr const &shaderA,
                              HdStShaderCodeSharedPtr const &shaderB);
 
+    /// Adds the fallback value of the given material param to
+    /// buffer specs and sources using the param's name.
+    ///
+    HDST_API
+    static void AddFallbackValueToSpecsAndSources(
+        const HdSt_MaterialParam &param,
+        HdBufferSpecVector * const specs,
+        HdBufferSourceSharedPtrVector * const sources);
+
 protected:
     HDST_API
     void _SetSource(TfToken const &shaderStageKey, std::string const &source);
 
     HDST_API
     ID _ComputeHash() const;
+
+    HDST_API
+    ID _ComputeTextureSourceHash() const;
 
 private:
     std::string _fragmentSource;
@@ -152,7 +172,10 @@ private:
     mutable size_t              _computedHash;
     mutable bool                _isValidComputedHash;
 
-    TextureDescriptorVector _textureDescriptors;
+    mutable size_t              _computedTextureSourceHash;
+    mutable bool                _isValidComputedTextureSourceHash;
+
+    NamedTextureHandleVector _namedTextureHandles;
 
     TfToken _materialTag;
 

@@ -49,13 +49,22 @@ namespace {
 WRAP_CUSTOM;
 
 
+static std::string
+_Repr(const UsdLuxLightPortal &self)
+{
+    std::string primRepr = TfPyRepr(self.GetPrim());
+    return TfStringPrintf(
+        "UsdLux.LightPortal(%s)",
+        primRepr.c_str());
+}
+
 } // anonymous namespace
 
 void wrapUsdLuxLightPortal()
 {
     typedef UsdLuxLightPortal This;
 
-    class_<This, bases<UsdGeomXformable> >
+    class_<This, bases<UsdLuxPortalLight> >
         cls("LightPortal");
 
     cls
@@ -82,6 +91,7 @@ void wrapUsdLuxLightPortal()
         .def(!self)
 
 
+        .def("__repr__", ::_Repr)
     ;
 
     _CustomWrapCode(cls);

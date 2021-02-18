@@ -112,6 +112,15 @@ _CreateInvisibleIdsAttr(UsdGeomPointInstancer &self,
         UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Int64Array), writeSparsely);
 }
 
+static std::string
+_Repr(const UsdGeomPointInstancer &self)
+{
+    std::string primRepr = TfPyRepr(self.GetPrim());
+    return TfStringPrintf(
+        "UsdGeom.PointInstancer(%s)",
+        primRepr.c_str());
+}
+
 } // anonymous namespace
 
 void wrapUsdGeomPointInstancer()
@@ -213,6 +222,7 @@ void wrapUsdGeomPointInstancer()
              &This::GetPrototypesRel)
         .def("CreatePrototypesRel",
              &This::CreatePrototypesRel)
+        .def("__repr__", ::_Repr)
     ;
 
     _CustomWrapCode(cls);
@@ -387,6 +397,8 @@ WRAP_CUSTOM {
              &_ComputeExtentAtTimes,
              (arg("times"), arg("baseTime")))
 
+        .def("GetInstanceCount", &UsdGeomPointInstancer::GetInstanceCount,
+            arg("timeCode")=UsdTimeCode::Default()) 
         ;
     TfPyRegisterStlSequencesFromPython<UsdTimeCode>();
     to_python_converter<std::vector<VtArray<GfMatrix4d>>,

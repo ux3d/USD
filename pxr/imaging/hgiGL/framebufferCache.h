@@ -29,7 +29,7 @@
 #include <vector>
 
 #include "pxr/pxr.h"
-#include "pxr/imaging/hgi/graphicsEncoderDesc.h"
+#include "pxr/imaging/hgi/graphicsCmdsDesc.h"
 #include "pxr/imaging/hgiGL/api.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -39,7 +39,7 @@ using HgiGLDescriptorCacheVec = std::vector<struct HgiGLDescriptorCacheItem*>;
 
 /// \class HgiGLFramebufferCache
 ///
-/// Manages a cache of framebuffer based on graphics encoder descriptors
+/// Manages a cache of framebuffers based on graphics cmds descriptors.
 ///
 class HgiGLFramebufferCache final
 {
@@ -54,8 +54,13 @@ public:
     /// If the framebuffer exists in the cache, it will be returned.
     /// If none exist that match the descriptor, it will be created.
     /// Do not hold onto the returned id. Re-acquire it every frame.
+    ///
+    /// When the cmds descriptor has resolved textures, two framebuffers are
+    /// created for the MSAA and for the resolved textures. The bool flag can
+    /// be used to access the respective ones.
     HGIGL_API
-    uint32_t AcquireFramebuffer(HgiGraphicsEncoderDesc const& desc);
+    uint32_t AcquireFramebuffer(HgiGraphicsCmdsDesc const& desc,
+                                bool resolved = false);
 
     /// Clears all framebuffersfrom cache.
     /// This should generally only be called when the device is being destroyed.

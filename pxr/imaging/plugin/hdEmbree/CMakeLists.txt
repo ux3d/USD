@@ -5,9 +5,9 @@ if(NOT EMBREE_FOUND)
     message(WARNING "Not building ${PXR_PACKAGE} because of missing dependency: Embree")
     return()
 endif()
-if (NOT ${PXR_ENABLE_GL_SUPPORT})
+if (NOT ${PXR_BUILD_GPU_SUPPORT})
     message(STATUS
-        "Skipping ${PXR_PACKAGE} because PXR_ENABLE_GL_SUPPORT is OFF")
+        "Skipping ${PXR_PACKAGE} because PXR_BUILD_GPU_SUPPORT is OFF")
     return()
 endif()
 
@@ -46,6 +46,9 @@ pxr_plugin(hdEmbree
 
     RESOURCE_FILES
         plugInfo.json
+
+    DOXYGEN_FILES
+        overview.dox
 )
 
 if (X11_FOUND OR APPLE)
@@ -54,6 +57,7 @@ pxr_build_test(testHdEmbree
         hdEmbree
         garch
         arch
+        hio
     CPPFILES
         testenv/testHdEmbree.cpp
 )

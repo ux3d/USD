@@ -50,10 +50,26 @@ WRAP_CUSTOM;
 
         
 static UsdAttribute
-_CreateFieldNameAttr(UsdVolOpenVDBAsset &self,
+_CreateFieldDataTypeAttr(UsdVolOpenVDBAsset &self,
                                       object defaultVal, bool writeSparsely) {
-    return self.CreateFieldNameAttr(
+    return self.CreateFieldDataTypeAttr(
         UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Token), writeSparsely);
+}
+        
+static UsdAttribute
+_CreateFieldClassAttr(UsdVolOpenVDBAsset &self,
+                                      object defaultVal, bool writeSparsely) {
+    return self.CreateFieldClassAttr(
+        UsdPythonToSdfType(defaultVal, SdfValueTypeNames->Token), writeSparsely);
+}
+
+static std::string
+_Repr(const UsdVolOpenVDBAsset &self)
+{
+    std::string primRepr = TfPyRepr(self.GetPrim());
+    return TfStringPrintf(
+        "UsdVol.OpenVDBAsset(%s)",
+        primRepr.c_str());
 }
 
 } // anonymous namespace
@@ -89,13 +105,21 @@ void wrapUsdVolOpenVDBAsset()
         .def(!self)
 
         
-        .def("GetFieldNameAttr",
-             &This::GetFieldNameAttr)
-        .def("CreateFieldNameAttr",
-             &_CreateFieldNameAttr,
+        .def("GetFieldDataTypeAttr",
+             &This::GetFieldDataTypeAttr)
+        .def("CreateFieldDataTypeAttr",
+             &_CreateFieldDataTypeAttr,
+             (arg("defaultValue")=object(),
+              arg("writeSparsely")=false))
+        
+        .def("GetFieldClassAttr",
+             &This::GetFieldClassAttr)
+        .def("CreateFieldClassAttr",
+             &_CreateFieldClassAttr,
              (arg("defaultValue")=object(),
               arg("writeSparsely")=false))
 
+        .def("__repr__", ::_Repr)
     ;
 
     _CustomWrapCode(cls);

@@ -23,9 +23,8 @@
 //
 #include "pxr/pxr.h"
 
-#include "pxr/imaging/glf/glew.h"
 #include "pxr/imaging/glf/drawTarget.h"
-#include "pxr/imaging/glf/image.h"
+#include "pxr/imaging/hio/image.h"
 
 #include "pxr/imaging/hd/engine.h"
 #include "pxr/imaging/hdSt/unitTestGLDrawing.h"
@@ -42,7 +41,7 @@
 
 #include "pxr/base/tf/errorMark.h"
 
-#include <embree2/rtcore.h>
+#include <embree3/rtcore.h>
 #include <iostream>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -58,6 +57,7 @@ public:
         : _smooth(false)
         , _instance(false)
         , _refined(false)
+        , _ao(false)
         , _outputName("color1.png")
     {
         SetCameraRotate(0,0);
@@ -119,9 +119,11 @@ private:
     // - Draw a scene with two instanced cubes?
     //   Or two normal cubes and a plane?
     // - Treat the cubes as subdivision surfaces, and refine them to spheres?
+    // - use ambient occlusion
     bool _smooth;
     bool _instance;
     bool _refined;
+    bool  _ao;
 
     // For offscreen tests, which AOV should we output?
     // (empty string means we should read color from the framebuffer).
@@ -226,6 +228,18 @@ void HdEmbree_TestGLDrawing::InitTest()
                 VtValue(HdRprimCollection(HdTokens->geometry, 
                 HdReprSelector(_smooth ? HdReprTokens->smoothHull 
                                        : HdReprTokens->hull))));
+    }
+
+    if(_ao) {
+        //
+        // Check ambient occlusion, this might matter especially in the case
+        // where smooth normals are not used since embree renderer then
+        // has to calculate the normals
+        //
+        _renderDelegate->SetRenderSetting(
+            HdEmbreeRenderSettingsTokens->enableAmbientOcclusion, VtValue(true));
+        _renderDelegate->SetRenderSetting(
+            HdEmbreeRenderSettingsTokens->ambientOcclusionSamples, VtValue(16));
     }
 
     if (_instance) {
@@ -382,12 +396,10 @@ void HdEmbree_TestGLDrawing::OffscreenTest()
         // multisampled color, etc.
         rb->Resolve();
 
-        GLenum unused;
-        GlfImage::StorageSpec storage;
+        HioImage::StorageSpec storage;
         storage.width = rb->GetWidth();
         storage.height = rb->GetHeight();
-        HdStGLConversions::GetGlFormat(rb->GetFormat(),
-            &storage.format, &storage.type, &unused);
+        storage.format = HdStGLConversions::GetHioFormat(rb->GetFormat());
         storage.flipped = true;
         storage.data = rb->Map();
 
@@ -399,15 +411,14 @@ void HdEmbree_TestGLDrawing::OffscreenTest()
             _RescaleDepth(reinterpret_cast<float*>(storage.data),
                 storage.width*storage.height);
         } else if (_aov == "primId") {
-            storage.format = GL_RGBA;
-            storage.type = GL_UNSIGNED_BYTE;
+            storage.format =  HioFormatUNorm8Vec4;
             _ColorizeId(reinterpret_cast<int32_t*>(storage.data),
                 storage.width*storage.height);
         }
 
         VtDictionary metadata;
 
-        GlfImageSharedPtr image = GlfImage::OpenForWriting(_outputName);
+        HioImageSharedPtr image = HioImage::OpenForWriting(_outputName);
         if (image) {
             image->Write(storage, metadata);
         }
@@ -455,6 +466,8 @@ void HdEmbree_TestGLDrawing::ParseArgs(int argc, char *argv[])
                    (i+1) < argc) {
             _outputName = std::string(argv[i+1]);
             ++i;
+        } else if (std::string(argv[i]) == "--ao") {
+            _ao = true;
         }
     }
 

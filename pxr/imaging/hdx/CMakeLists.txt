@@ -1,9 +1,11 @@
 set(PXR_PREFIX pxr/imaging)
 set(PXR_PACKAGE hdx)
 
-if (NOT ${PXR_ENABLE_GL_SUPPORT})
+# XXX We tmp check for PXR_ENABLE_GL_SUPPORT since Hdx currently still uses
+# OpenGL directly. Once Hdx uses only Hgi, remove GL_SUPPORT check.
+if (NOT ${PXR_BUILD_GPU_SUPPORT} OR NOT ${PXR_ENABLE_GL_SUPPORT})
     message(STATUS
-        "Skipping ${PXR_PACKAGE} because PXR_ENABLE_GL_SUPPORT is OFF")
+        "Skipping ${PXR_PACKAGE} because PXR_BUILD_GPU_SUPPORT is OFF")
     return()
 endif()
 
@@ -26,25 +28,22 @@ pxr_library(hdx
         hd
         hdSt
         hgi
+        hgiInterop
         cameraUtil
         sdf
-        ${GLEW_LIBRARY}
         ${optionalLibs}
 
     INCLUDE_DIRS
-        ${GLEW_INCLUDE_DIR}
         ${optionalIncludeDirs}
 
     PUBLIC_CLASSES
-        aovResolveTask
-        colorizeTask
+        aovInputTask
         colorizeSelectionTask
         colorChannelTask
         colorCorrectionTask
-        drawTargetRenderPass
         drawTargetTask
-        drawTargetResolveTask
         fullscreenShader
+        hgiConversions
         oitBufferAccessor
         oitRenderTask
         oitResolveTask
@@ -53,13 +52,13 @@ pxr_library(hdx
         pickTask
         pickFromRenderBufferTask
         presentTask
-        progressiveTask
         renderTask
         renderSetupTask
         selectionTask
         selectionTracker
         shadowTask
         simpleLightTask
+        task
         taskController
         tokens
         types
@@ -74,7 +73,6 @@ pxr_library(hdx
         unitTestDelegate
 
     PRIVATE_HEADERS
-        unitTestGLDrawing.h
         unitTestUtils.h
 
     RESOURCE_FILES
@@ -84,6 +82,7 @@ pxr_library(hdx
         shaders/fullscreen.glslfx
         shaders/renderPass.glslfx
         shaders/renderPassShader.glslfx
+        shaders/renderPassDiscardUnselectedShader.glslfx
         shaders/renderPassIdShader.glslfx
         shaders/renderPassPickingShader.glslfx
         shaders/renderPassShadowShader.glslfx
@@ -94,6 +93,9 @@ pxr_library(hdx
         shaders/oitResolveImageShader.glslfx
         shaders/outline.glslfx
         textures/StinsonBeach.exr
+
+    DOXYGEN_FILES
+        overview.dox
 )
 
 if (X11_FOUND)
@@ -125,26 +127,26 @@ pxr_build_test(testHdxIdRender
     LIBRARIES
         hdx
         hd
+        hdSt
         sdf
         glf
         garch
         arch
         tf
     CPPFILES
-        unitTestGLDrawing.cpp
         testenv/testHdxIdRender.cpp
 )
 pxr_build_test(testHdxPickAndHighlight
     LIBRARIES
         hdx
         hd
+        hdSt
         sdf
         glf
         garch
         arch
         tf
     CPPFILES
-        unitTestGLDrawing.cpp
         unitTestUtils.cpp
         testenv/testHdxPickAndHighlight.cpp
 )
@@ -176,13 +178,13 @@ pxr_build_test(testHdxPickingWithReprAndRefineChanges
     LIBRARIES
         hdx
         hd
+        hdSt
         sdf
         glf
         garch
         arch
         tf
     CPPFILES
-        unitTestGLDrawing.cpp
         unitTestUtils.cpp
         testenv/testHdxPickingWithReprAndRefineChanges.cpp
 )
@@ -190,28 +192,42 @@ pxr_build_test(testHdxUnpickablesAsOccluders
     LIBRARIES
         hdx
         hd
+        hdSt
         sdf
         glf
         garch
         arch
         tf
     CPPFILES
-        unitTestGLDrawing.cpp
         unitTestUtils.cpp
         testenv/testHdxUnpickablesAsOccluders.cpp
 )
-pxr_build_test(testHdxPickSubprims
+pxr_build_test(testHdxPickTarget
     LIBRARIES
         hdx
         hd
+        hdSt
         sdf
         glf
         garch
         arch
         tf
     CPPFILES
-        unitTestGLDrawing.cpp
         unitTestUtils.cpp
-        testenv/testHdxPickSubprims.cpp
+        testenv/testHdxPickTarget.cpp
+)
+pxr_build_test(testHdxPickResolveMode
+    LIBRARIES
+        hdx
+        hd
+        hdSt
+        sdf
+        glf
+        garch
+        arch
+        tf
+    CPPFILES
+        unitTestUtils.cpp
+        testenv/testHdxPickResolveMode.cpp
 )
 endif()

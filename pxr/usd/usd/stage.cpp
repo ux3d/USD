@@ -28,6 +28,7 @@
 #include "pxr/usd/usd/attributeQuery.h"
 #include "pxr/usd/usd/clip.h"
 #include "pxr/usd/usd/clipCache.h"
+#include "pxr/usd/usd/clipSet.h"
 #include "pxr/usd/usd/common.h"
 #include "pxr/usd/usd/debugCodes.h"
 #include "pxr/usd/usd/instanceCache.h"
@@ -36,6 +37,7 @@
 #include "pxr/usd/usd/prim.h"
 #include "pxr/usd/usd/primDefinition.h"
 #include "pxr/usd/usd/primRange.h"
+#include "pxr/usd/usd/primTypeInfoCache.h"
 #include "pxr/usd/usd/relationship.h"
 #include "pxr/usd/usd/resolver.h"
 #include "pxr/usd/usd/resolveInfo.h"
@@ -467,6 +469,7 @@ UsdStage::UsdStage(const SdfLayerRefPtr& rootLayer,
     , _initialLoadSet(load)
     , _populationMask(mask)
     , _isClosingStage(false)
+    , _isWritingFallbackPrimTypes(false)
 {
     if (!TF_VERIFY(_rootLayer))
         return;
@@ -516,9 +519,9 @@ UsdStage::_Close()
     // Destroy prim structure.
     vector<SdfPath> primsToDestroy;
     if (_pseudoRoot) {
-        // Instancing masters are not children of the pseudo-root so
+        // Instancing prototypes are not children of the pseudo-root so
         // we need to explicitly destroy those subtrees.
-        primsToDestroy = _instanceCache->GetAllMasters();
+        primsToDestroy = _instanceCache->GetAllPrototypes();
         wd.Run([this, &primsToDestroy]() {
                 primsToDestroy.push_back(SdfPath::AbsoluteRootPath());
                 _DestroyPrimsInParallel(primsToDestroy);
@@ -579,7 +582,7 @@ struct _NameChildrenPred
 
         // UsdStage doesn't expose any prims beneath instances, so we don't need
         // to compute indexes for children of instances unless the index will be
-        // used as a source for a master prim.
+        // used as a source for a prototype prim.
         if (index.IsInstanceable()) {
             return _instanceCache->RegisterInstancePrimIndex(
                 index, _mask, *_loadRules);
@@ -621,13 +624,12 @@ UsdStage::_InstantiateStage(const SdfLayerRefPtr &rootLayer,
     }
 
     // Debug timing info
-    boost::optional<TfStopwatch> stopwatch;
+    TfStopwatch stopwatch;
     const bool usdInstantiationTimeDebugCodeActive = 
         TfDebug::IsEnabled(USD_STAGE_INSTANTIATION_TIME);
 
     if (usdInstantiationTimeDebugCodeActive) {
-        stopwatch = TfStopwatch();
-        stopwatch->Start();
+        stopwatch.Start();
     }
 
     if (!rootLayer)
@@ -650,7 +652,7 @@ UsdStage::_InstantiateStage(const SdfLayerRefPtr &rootLayer,
             {absoluteRootPath}, "instantiating stage", &instanceChanges);
     stage->_pseudoRoot = stage->_InstantiatePrim(absoluteRootPath);
 
-    const size_t subtreeCount = instanceChanges.newMasterPrims.size() + 1;
+    const size_t subtreeCount = instanceChanges.newPrototypePrims.size() + 1;
     std::vector<Usd_PrimDataPtr> subtreesToCompose;
     SdfPathVector primIndexPathsForSubtrees;
     subtreesToCompose.reserve(subtreeCount);
@@ -658,16 +660,16 @@ UsdStage::_InstantiateStage(const SdfLayerRefPtr &rootLayer,
     subtreesToCompose.push_back(stage->_pseudoRoot);
     primIndexPathsForSubtrees.push_back(absoluteRootPath);
 
-    // We only need to add new masters since, during stage initialization there
-    // should not be any changed masters
-    for (size_t i = 0; i != instanceChanges.newMasterPrims.size(); ++i) {
-        const SdfPath& masterPath = instanceChanges.newMasterPrims[i];
-        const SdfPath& masterPrimIndexPath = 
-            instanceChanges.newMasterPrimIndexes[i];
+    // We only need to add new prototypes since, during stage initialization
+    // there should not be any changed prototypes
+    for (size_t i = 0; i != instanceChanges.newPrototypePrims.size(); ++i) {
+        const SdfPath& protoPath = instanceChanges.newPrototypePrims[i];
+        const SdfPath& protoPrimIndexPath = 
+            instanceChanges.newPrototypePrimIndexes[i];
 
-        Usd_PrimDataPtr masterPrim = stage->_InstantiateMasterPrim(masterPath);
-        subtreesToCompose.push_back(masterPrim);
-        primIndexPathsForSubtrees.push_back(masterPrimIndexPath);
+        Usd_PrimDataPtr protoPrim = stage->_InstantiatePrototypePrim(protoPath);
+        subtreesToCompose.push_back(protoPrim);
+        primIndexPathsForSubtrees.push_back(protoPrimIndexPath);
     }
 
     stage->_ComposeSubtreesInParallel(
@@ -682,10 +684,10 @@ UsdStage::_InstantiateStage(const SdfLayerRefPtr &rootLayer,
 
     // Debug timing info
     if (usdInstantiationTimeDebugCodeActive) {
-        stopwatch->Stop();
+        stopwatch.Stop();
         TF_DEBUG(USD_STAGE_INSTANTIATION_TIME)
             .Msg("UsdStage::_InstantiateStage: Time elapsed (s): %f\n",
-                 stopwatch->GetSeconds());
+                 stopwatch.GetSeconds());
     }
     
     return stage;
@@ -1257,9 +1259,9 @@ UsdStage::_GetSchemaRelationshipSpec(const UsdRelationship &rel) const
 bool
 UsdStage::_ValidateEditPrim(const UsdPrim &prim, const char* operation) const
 {
-    if (ARCH_UNLIKELY(prim.IsInMaster())) {
+    if (ARCH_UNLIKELY(prim.IsInPrototype())) {
         TF_CODING_ERROR("Cannot %s at path <%s>; "
-                        "authoring to an instancing master is not allowed.",
+                        "authoring to an instancing prototype is not allowed.",
                         operation, prim.GetPath().GetText());
         return false;
     }
@@ -1278,9 +1280,9 @@ bool
 UsdStage::_ValidateEditPrimAtPath(const SdfPath &primPath, 
                                   const char* operation) const
 {
-    if (ARCH_UNLIKELY(Usd_InstanceCache::IsPathInMaster(primPath))) {
+    if (ARCH_UNLIKELY(Usd_InstanceCache::IsPathInPrototype(primPath))) {
         TF_CODING_ERROR("Cannot %s at path <%s>; "
-                        "authoring to an instancing master is not allowed.",
+                        "authoring to an instancing prototype is not allowed.",
                         operation, primPath.GetText());
         return false;
     }
@@ -1765,7 +1767,7 @@ _IsPrivateFieldKey(const TfToken& fieldKey)
         ignoredKeys.insert(SdfFieldKeys->TimeSamples);
     });
 
-    // First look-up the field in the black-list table.
+    // First look-up the field in the exclude/ignore table.
     if (ignoredKeys.find(fieldKey) != ignoredKeys.end())
         return true;
 
@@ -1824,8 +1826,8 @@ UsdStage::GetPrimAtPath(const SdfPath &path) const
 
     // If this path points to a prim beneath an instance, return
     // an instance proxy that uses the prim data from the corresponding
-    // prim in the master but appears to be a prim at the given path.
-    Usd_PrimDataConstPtr primData = _GetPrimDataAtPathOrInMaster(path);
+    // prim in the prototype but appears to be a prim at the given path.
+    Usd_PrimDataConstPtr primData = _GetPrimDataAtPathOrInPrototype(path);
     const SdfPath& proxyPrimPath = 
         primData && primData->GetPath() != path ? path : SdfPath::EmptyPath();
     return UsdPrim(primData, proxyPrimPath);
@@ -1896,19 +1898,19 @@ UsdStage::_GetPrimDataAtPath(const SdfPath &path)
 }
 
 Usd_PrimDataConstPtr 
-UsdStage::_GetPrimDataAtPathOrInMaster(const SdfPath &path) const
+UsdStage::_GetPrimDataAtPathOrInPrototype(const SdfPath &path) const
 {
     Usd_PrimDataConstPtr primData = _GetPrimDataAtPath(path);
 
     // If no prim data exists at the given path, check if this
     // path is pointing to a prim beneath an instance. If so, we
     // need to return the prim data for the corresponding prim
-    // in the master.
+    // in the prototype.
     if (!primData) {
-        const SdfPath primInMasterPath = 
-            _instanceCache->GetPathInMasterForInstancePath(path);
-        if (!primInMasterPath.IsEmpty()) {
-            primData = _GetPrimDataAtPath(primInMasterPath);
+        const SdfPath primInPrototypePath = 
+            _instanceCache->GetPathInPrototypeForInstancePath(path);
+        if (!primInPrototypePath.IsEmpty()) {
+            primData = _GetPrimDataAtPath(primInPrototypePath);
         }
     }
 
@@ -1923,8 +1925,8 @@ UsdStage::_IsValidForUnload(const SdfPath& path) const
                         path.GetText());
         return false;
     }
-    if (_instanceCache->IsPathInMaster(path)) {
-        TF_CODING_ERROR("Attempted to load/unload a master path <%s>",
+    if (_instanceCache->IsPathInPrototype(path)) {
+        TF_CODING_ERROR("Attempted to load/unload a prototype path <%s>",
                         path.GetText());
         return false;
     }
@@ -1967,8 +1969,8 @@ UsdStage::_IsValidForLoad(const SdfPath& path) const
         return false;
     }
 
-    if (curPrim.IsMaster()) {
-        TF_CODING_ERROR("Attempt to load instance master <%s>",
+    if (curPrim.IsPrototype()) {
+        TF_CODING_ERROR("Attempt to load instance prototype <%s>",
                         path.GetString().c_str());
         return false;
     }
@@ -1990,9 +1992,9 @@ UsdStage::_DiscoverPayloads(const SdfPath& rootPath,
         [this, unloadedOnly, primIndexPaths, usdPrimPaths,
          &primIndexPathsVec, &usdPrimPathsVec]
         (UsdPrim const &prim) {
-        // Inactive prims are never included in this query.  Masters are
+        // Inactive prims are never included in this query.  Prototypes are
         // also never included, since they aren't independently loadable.
-        if (!prim.IsActive() || prim.IsMaster())
+        if (!prim.IsActive() || prim.IsPrototype())
             return;
         
         if (prim._GetSourcePrimIndex().HasAnyPayloads()) {
@@ -2206,7 +2208,7 @@ UsdStage::GetLoadSet()
     for (const auto& primIndexPath : _cache->GetIncludedPayloads()) {
         // Get the path of the Usd prim using this prim index path.
         // This ensures we return the appropriate path if this prim index
-        // is being used by a prim within a master.
+        // is being used by a prim within a prototype.
         //
         // If there is no Usd prim using this prim index, we return the
         // prim index path anyway. This could happen if the ancestor of
@@ -2324,52 +2326,59 @@ UsdStage::ExpandPopulationMask(
 vector<UsdPrim>
 UsdStage::GetMasters() const
 {
-    // Sort the instance master paths to provide a stable ordering for
-    // this function.
-    SdfPathVector masterPaths = _instanceCache->GetAllMasters();
-    std::sort(masterPaths.begin(), masterPaths.end());
-
-    vector<UsdPrim> masterPrims;
-    for (const auto& path : masterPaths) {
-        UsdPrim p = GetPrimAtPath(path);
-        if (TF_VERIFY(p, "Failed to find prim at master path <%s>.\n",
-                      path.GetText())) {
-            masterPrims.push_back(p);
-        }                   
-    }
-    return masterPrims;
+    return GetPrototypes();
 }
 
 vector<UsdPrim>
-UsdStage::_GetInstancesForMaster(const UsdPrim& masterPrim) const
+UsdStage::GetPrototypes() const
 {
-    if (!masterPrim.IsMaster()) {
+    // Sort the instance prototype paths to provide a stable ordering for
+    // this function.
+    SdfPathVector prototypePaths = _instanceCache->GetAllPrototypes();
+    std::sort(prototypePaths.begin(), prototypePaths.end());
+
+    vector<UsdPrim> prototypePrims;
+    for (const auto& path : prototypePaths) {
+        UsdPrim p = GetPrimAtPath(path);
+        if (TF_VERIFY(p, "Failed to find prim at prototype path <%s>.\n",
+                      path.GetText())) {
+            prototypePrims.push_back(p);
+        }                   
+    }
+    return prototypePrims;
+}
+
+vector<UsdPrim>
+UsdStage::_GetInstancesForPrototype(const UsdPrim& prototypePrim) const
+{
+    if (!prototypePrim.IsPrototype()) {
         return {};
     }
 
     vector<UsdPrim> instances;
     SdfPathVector instancePaths = 
-        _instanceCache->GetInstancePrimIndexesForMaster(masterPrim.GetPath());
+        _instanceCache->GetInstancePrimIndexesForPrototype(
+            prototypePrim.GetPath());
     instances.reserve(instancePaths.size());
     for (const SdfPath& instancePath : instancePaths) {
         Usd_PrimDataConstPtr primData = 
-            _GetPrimDataAtPathOrInMaster(instancePath);
+            _GetPrimDataAtPathOrInPrototype(instancePath);
         instances.push_back(UsdPrim(primData, SdfPath::EmptyPath()));
     }
     return instances;
 }
 
 Usd_PrimDataConstPtr 
-UsdStage::_GetMasterForInstance(Usd_PrimDataConstPtr prim) const
+UsdStage::_GetPrototypeForInstance(Usd_PrimDataConstPtr prim) const
 {
     if (!prim->IsInstance()) {
         return nullptr;
     }
 
-    const SdfPath masterPath =
-        _instanceCache->GetMasterForInstanceablePrimIndexPath(
+    const SdfPath protoPath =
+        _instanceCache->GetPrototypeForInstanceablePrimIndexPath(
             prim->GetPrimIndex().GetPath());
-    return masterPath.IsEmpty() ? nullptr : _GetPrimDataAtPath(masterPath);
+    return protoPath.IsEmpty() ? nullptr : _GetPrimDataAtPath(protoPath);
 }
 
 bool 
@@ -2377,7 +2386,7 @@ UsdStage::_IsObjectDescendantOfInstance(const SdfPath& path) const
 {
     // If the given path is a descendant of an instanceable
     // prim index, it would not be computed during composition unless
-    // it is also serving as the source prim index for a master prim
+    // it is also serving as the source prim index for a prototype prim
     // on this stage.
     return (_instanceCache->IsPathDescendantToAnInstance(
             path.GetAbsoluteRootOrPrimPath()));
@@ -2390,29 +2399,29 @@ UsdStage::_GetPrimPathUsingPrimIndexAtPath(const SdfPath& primIndexPath) const
 
     // In general, the path of a UsdPrim on a stage is the same as the
     // path of its prim index. However, this is not the case when
-    // prims in masters are involved. In these cases, we need to use
-    // the instance cache to map the prim index path to the master
+    // prims in prototypes are involved. In these cases, we need to use
+    // the instance cache to map the prim index path to the prototype
     // prim on the stage.
     if (GetPrimAtPath(primIndexPath)) {
         primPath = primIndexPath;
     } 
-    else if (_instanceCache->GetNumMasters() != 0) {
-        const vector<SdfPath> mastersUsingPrimIndex = 
-            _instanceCache->GetPrimsInMastersUsingPrimIndexPath(
+    else if (_instanceCache->GetNumPrototypes() != 0) {
+        const vector<SdfPath> prototypesUsingPrimIndex = 
+            _instanceCache->GetPrimsInPrototypesUsingPrimIndexPath(
                 primIndexPath);
 
-        for (const auto& pathInMaster : mastersUsingPrimIndex) {
+        for (const auto& pathInPrototype : prototypesUsingPrimIndex) {
             // If this path is a root prim path, it must be the path of a
-            // master prim. This function wants to ignore master prims,
+            // prototype prim. This function wants to ignore prototype prims,
             // since they appear to have no prim index to the outside
             // consumer.
             //
             // However, if this is not a root prim path, it must be the
-            // path of an prim nested inside a master, which we do want
+            // path of an prim nested inside a prototype, which we do want
             // to return. There will only ever be one of these, so we
             // can get this prim and break immediately.
-            if (!pathInMaster.IsRootPrimPath()) {
-                primPath = pathInMaster;
+            if (!pathInPrototype.IsRootPrimPath()) {
+                primPath = pathInPrototype;
                 break;
             }
         }
@@ -2444,16 +2453,16 @@ UsdStage::_InstantiatePrim(const SdfPath &primPath)
 }
 
 Usd_PrimDataPtr
-UsdStage::_InstantiateMasterPrim(const SdfPath &primPath) 
+UsdStage::_InstantiatePrototypePrim(const SdfPath &primPath) 
 {
-    // Master prims are parented beneath the pseudo-root,
+    // Prototype prims are parented beneath the pseudo-root,
     // but are *not* children of the pseudo-root. This ensures
-    // that consumers never see master prims unless they are
+    // that consumers never see prototype prims unless they are
     // explicitly asked for. So, we don't need to set the child
     // link here.
-    Usd_PrimDataPtr masterPrim = _InstantiatePrim(primPath);
-    masterPrim->_SetParentLink(_pseudoRoot);
-    return masterPrim;
+    Usd_PrimDataPtr prototypePrim = _InstantiatePrim(primPath);
+    prototypePrim->_SetParentLink(_pseudoRoot);
+    return prototypePrim;
 }
 
 namespace {
@@ -2497,7 +2506,7 @@ UsdStage::_ComposeChildren(Usd_PrimDataPtr prim,
 
     // Instance prims do not directly expose any of their name children.
     // Discard any pre-existing children and add a task for composing
-    // the instance's master's subtree if it's root uses this instance's
+    // the instance's prototype's subtree if it's root uses this instance's
     // prim index as a source.
     if (prim->IsInstance()) {
         TF_DEBUG(USD_COMPOSITION).Msg("Instance prim <%s>\n",
@@ -2515,12 +2524,12 @@ UsdStage::_ComposeChildren(Usd_PrimDataPtr prim,
     // completely included, stop looking at the mask from here forward.
     if (mask) {
         // We always operate on the source prim index path here, not the prim
-        // path since that would be something like /_MasterX/../../.. for prims
-        // in masters.  Masks and load rules operate on the "uninstanced" view
-        // of the world, and are included in instancing keys, so whichever index
-        // we choose to be the source for a master must be included in the
-        // stage-wide pop mask & load rules, and identically for all instances
-        // that share a master.
+        // path since that would be something like /__Prototype_X/.. for prims
+        // in prototypes.  Masks and load rules operate on the "uninstanced"
+        // view of the world, and are included in instancing keys, so whichever
+        // index we choose to be the source for a prototype must be included in
+        // the stage-wide pop mask & load rules, and identically for all
+        // instances that share a prototype.
         const SdfPath& sourceIndexPath = prim->GetSourcePrimIndex().GetPath();
         if (mask->IncludesSubtree(sourceIndexPath)) {
             mask = nullptr;
@@ -2750,8 +2759,8 @@ UsdStage::_ComposeChildSubtree(Usd_PrimDataPtr prim,
                                Usd_PrimDataConstPtr parent,
                                UsdStagePopulationMask const *mask)
 {
-    if (parent->IsInMaster()) {
-        // If this UsdPrim is a child of an instance master, its 
+    if (parent->IsInPrototype()) {
+        // If this UsdPrim is a child of an instance prototype, its 
         // source prim index won't be at the same path as its stage path.
         // We need to construct the path from the parent's source index.
         const SdfPath sourcePrimIndexPath = 
@@ -2814,6 +2823,57 @@ UsdStage::_ReportErrors(const PcpErrorVector &errors,
             }
         }
     }
+}
+
+// Static prim type info cache
+static Usd_PrimTypeInfoCache &
+_GetPrimTypeInfoCache()
+{
+    static Usd_PrimTypeInfoCache cache;
+    return cache;
+}
+
+// Iterate over a prim's specs until we get a non-empty, non-any-type typeName.
+static TfToken
+_ComposeTypeName(const PcpPrimIndex *primIndex)
+{
+    for (Usd_Resolver res(primIndex); res.IsValid(); res.NextLayer()) {
+        TfToken tok;
+        if (res.GetLayer()->HasField(
+                res.GetLocalPath(), SdfFieldKeys->TypeName, &tok)) {
+            if (!tok.IsEmpty() && tok != SdfTokens->AnyTypeToken)
+                return tok;
+        }
+    }
+    return TfToken();
+}
+
+static void
+_ComposeAuthoredAppliedSchemas(
+    const PcpPrimIndex *primIndex, TfTokenVector *schemas)
+{
+    // Collect all list op opinions for the API schemas field from strongest to
+    // weakest. Then we apply them from weakest to strongest.
+    std::vector<SdfTokenListOp> listOps;
+
+    SdfTokenListOp listOp;
+    for (Usd_Resolver res(primIndex); res.IsValid(); res.NextLayer()) {
+        if (res.GetLayer()->HasField(
+                res.GetLocalPath(), UsdTokens->apiSchemas, &listOp)) {
+            // Add the populated list op to the end of the list.
+            listOps.emplace_back();
+            listOps.back().Swap(listOp);
+            // An explicit list op overwrites anything weaker so we can just
+            // stop here if it's explicit.
+            if (listOps.back().IsExplicit()) {
+                break;
+            }
+        }
+    }
+
+    // Apply the listops to our output in reverse order (weakest to strongest).
+    std::for_each(listOps.crbegin(), listOps.crend(),
+        [&schemas](const SdfTokenListOp& op) { op.ApplyOperations(schemas); });
 }
 
 void
@@ -2910,13 +2970,33 @@ UsdStage::_ComposeSubtreeImpl(
     parent = parent ? parent : prim->GetParent();
 
     // If this prim's parent is the pseudo-root and it has a different
-    // path from its source prim index, it must represent a master prim.
-    const bool isMasterPrim =
+    // path from its source prim index, it must represent a prototype prim.
+    const bool isPrototypePrim =
         (parent == _pseudoRoot 
          && prim->_primIndex->GetPath() != prim->GetPath());
 
+    if (parent && !isPrototypePrim) {
+        // Compose the type info full type ID for the prim which includes
+        // the type name, applied schemas, and a possible mapped fallback type 
+        // if the stage specifies it.
+        Usd_PrimTypeInfoCache::TypeId typeId(
+            _ComposeTypeName(prim->_primIndex));
+        _ComposeAuthoredAppliedSchemas(
+            prim->_primIndex, &typeId.appliedAPISchemas);
+        if (const TfToken *fallbackType = TfMapLookupPtr(
+                _invalidPrimTypeToFallbackMap, typeId.primTypeName)) {
+            typeId.mappedTypeName = *fallbackType;
+        }
+
+        // Ask the type info cache for the type info for our type.
+        prim->_primTypeInfo = 
+            _GetPrimTypeInfoCache().FindOrCreatePrimTypeInfo(std::move(typeId));
+    } else {
+        prim->_primTypeInfo = _GetPrimTypeInfoCache().GetEmptyPrimTypeInfo();
+    }
+
     // Compose type info and flags for prim.
-    prim->_ComposeAndCacheTypeAndFlags(parent, isMasterPrim);
+    prim->_ComposeAndCacheFlags(parent, isPrototypePrim);
 
     // Pre-compute clip information for this prim to avoid doing so
     // at value resolution time.
@@ -2925,6 +3005,18 @@ UsdStage::_ComposeSubtreeImpl(
             prim->GetPath(), prim->GetPrimIndex());
         prim->_SetMayHaveOpinionsInClips(
             primHasAuthoredClips || parent->MayHaveOpinionsInClips());
+    } else {
+        // When composing the pseudoroot we also determine any fallback type
+        // mappings that the stage defines for type names that don't have a 
+        // valid schema. The possible mappings are defined in the root layer
+        // metadata and are needed to compose type info for all the other prims,
+        // thus why we do this here.
+        _invalidPrimTypeToFallbackMap.clear();
+        VtDictionary fallbackPrimTypes;
+        if (GetMetadata(UsdTokens->fallbackPrimTypes, &fallbackPrimTypes)) {
+            _GetPrimTypeInfoCache().ComputeInvalidPrimTypeToFallbackMap(
+                fallbackPrimTypes, &_invalidPrimTypeToFallbackMap);
+        }
     }
 
     // Compose the set of children on this prim.
@@ -2961,9 +3053,10 @@ UsdStage::_DestroyPrimsInParallel(const vector<SdfPath>& paths)
 
     for (const auto& path : paths) {
         Usd_PrimDataPtr prim = _GetPrimDataAtPath(path);
-        // XXX: This should be converted to a TF_VERIFY once
-        // bug 141575 is fixed.
-        if (prim) {
+        // We *expect* every prim in paths to be valid as we iterate, but at
+        // one time had issues with deactivated prototype prims, so we preserve
+        // a guard for resiliency.  See testUsdBug141491.py
+        if (TF_VERIFY(prim)) {
             _dispatcher->Run(&UsdStage::_DestroyPrim, this, prim);
         }
     }
@@ -3026,13 +3119,12 @@ UsdStage::Reload()
 
     ArResolverScopedCache resolverCache;
 
+    // Reload layers that are reached via composition.
     PcpChanges changes;
     _cache->Reload(&changes);
 
-    // XXX: Usd should ideally be doing the reloads for both clip layers
-    // as well as any that need to be reloaded as noticed by Pcp.
-    // See bug/140498 for more info.
-    SdfLayer::ReloadLayers(_clipCache->GetUsedLayers()); 
+    // Reload all clip layers that are opened.
+    _clipCache->Reload();
 
     // Process changes.  This won't be invoked automatically if we didn't
     // reload any layers but only loaded layers that we failed to load
@@ -3114,6 +3206,37 @@ UsdStage::SaveSessionLayers()
     const PcpLayerStackPtr localLayerStack = _GetPcpCache()->GetLayerStack();
     if (TF_VERIFY(localLayerStack)) {
         _SaveLayers(localLayerStack->GetSessionLayers());
+    }
+}
+
+void 
+UsdStage::WriteFallbackPrimTypes()
+{
+    // Mark that we're writing the fallback prim types from the schema registry
+    // so that we can ignore changes to the fallbackPrimTypes metadata if we 
+    // end up writing it below. Otherwise we could end up rebuilding the entire
+    // stage unnecessarily when this particular data shouldn't change any of
+    // the prims' composition.
+    TfScopedVar<bool> resetIsWriting(_isWritingFallbackPrimTypes, true);
+
+    // Any fallback types for schema prim types will be defined in the schemas
+    // themselves. The schema registry provides the fallback prim type 
+    // dictionary for us to write in the metadata
+    const VtDictionary &schemaFallbackTypes = 
+        UsdSchemaRegistry::GetInstance().GetFallbackPrimTypes();
+    if (!schemaFallbackTypes.empty()) {
+        // The stage may already have metadata for fallback prim types, written
+        // from this version of Usd, a different version of Usd, or possibly
+        // direct user authoring of the metadata. We don't overwrite any 
+        // existing fallbacks; we only add entries for the types that don't have
+        // fallbacks defined in the metadata yet.
+        VtDictionary existingFallbackTypes;
+        if (GetMetadata(UsdTokens->fallbackPrimTypes, &existingFallbackTypes)) {
+            VtDictionaryOver(&existingFallbackTypes, schemaFallbackTypes);
+            SetMetadata(UsdTokens->fallbackPrimTypes, existingFallbackTypes);
+        } else {
+            SetMetadata(UsdTokens->fallbackPrimTypes, schemaFallbackTypes);
+        }
     }
 }
 
@@ -3436,7 +3559,18 @@ UsdStage::MuteAndUnmuteLayers(const std::vector<std::string> &muteLayers,
     TfAutoMallocTag2 tag("Usd", _mallocTagID);
 
     PcpChanges changes;
-    _cache->RequestLayerMuting(muteLayers, unmuteLayers, &changes);
+    std::vector<std::string> newMutedLayers, newUnMutedLayers;
+    _cache->RequestLayerMuting(muteLayers, unmuteLayers, &changes, 
+            &newMutedLayers, &newUnMutedLayers);
+
+    UsdStageWeakPtr self(this);
+
+    // Notify for layer muting/unmuting
+    if (!newMutedLayers.empty() || !newUnMutedLayers.empty()) {
+        UsdNotice::LayerMutingChanged(self, newMutedLayers, newUnMutedLayers)
+            .Send(self);
+    }
+
     if (changes.IsEmpty()) {
         return;
     }
@@ -3444,8 +3578,6 @@ UsdStage::MuteAndUnmuteLayers(const std::vector<std::string> &muteLayers,
     using _PathsToChangesMap = UsdNotice::ObjectsChanged::_PathsToChangesMap;
     _PathsToChangesMap resyncChanges, infoChanges;
     _Recompose(changes, &resyncChanges);
-
-    UsdStageWeakPtr self(this);
 
     UsdNotice::ObjectsChanged(self, &resyncChanges, &infoChanges)
         .Send(self);
@@ -3699,12 +3831,32 @@ UsdStage::_HandleLayersDidChange(
 
     SdfPathVector changedActivePaths;
 
+    // A fallback prim types change occurs when the fallbackPrimTypes metadata
+    // changes on the root or session layer. 
+    // Note that we never process these changes while writing the schema 
+    // defined prim type fallbacks to the stage metadata via 
+    // WriteFallbackPrimTypes. Since the function can only write fallbacks for 
+    // recognized schema types and does not overwrite existing fallback entries,
+    // it creates no effective changes to the composed prims. So, we have to 
+    // ignore this layer metadata change to avoid unnecessarily recomposing 
+    // the whole stage.
+    auto _IsFallbackPrimTypesChange = 
+        [this](const SdfLayerHandle &layer, const SdfPath &sdfPath,
+               const TfToken &infoKey)
+    {
+        return infoKey == UsdTokens->fallbackPrimTypes &&
+               !this->_isWritingFallbackPrimTypes &&
+               sdfPath == SdfPath::AbsoluteRootPath() &&
+               (layer == this->GetRootLayer() || 
+                layer == this->GetSessionLayer());
+    };
+
     // Add dependent paths for any PrimSpecs whose fields have changed that may
     // affect cached prim information.
     for(const auto& layerAndChangelist : n.GetChangeListVec()) {
         // If this layer does not pertain to us, skip.
-        if (_cache->FindAllLayerStacksUsingLayer(
-                layerAndChangelist.first).empty()) {
+        const SdfLayerHandle &layer = layerAndChangelist.first;
+        if (_cache->FindAllLayerStacksUsingLayer(layer).empty()) {
             continue;
         }
 
@@ -3729,7 +3881,7 @@ UsdStage::_HandleLayersDidChange(
             TF_DEBUG(USD_CHANGES).Msg(
                 "<%s> in @%s@ changed.\n",
                 sdfPath.GetText(), 
-                layerAndChangelist.first->GetIdentifier().c_str());
+                layer->GetIdentifier().c_str());
 
             bool willRecompose = false;
             if (sdfPath == SdfPath::AbsoluteRootPath() ||
@@ -3758,7 +3910,13 @@ UsdStage::_HandleLayersDidChange(
                             // XXX: Could be more specific when recomposing due
                             //      to clip changes. E.g., only update the clip
                             //      resolver and bits on each prim.
-                            UsdIsClipRelatedField(infoKey)) {
+                            UsdIsClipRelatedField(infoKey) ||
+                            // Fallback prim type changes may potentially only 
+                            // affect a small number or prims, but this type of
+                            // change should be so rare that it's not really
+                            // worth parsing the minimal set of prims to 
+                            // recompose.
+                            _IsFallbackPrimTypesChange(layer, sdfPath, infoKey)) {
 
                             TF_DEBUG(USD_CHANGES).Msg(
                                 "Changed field: %s\n", infoKey.GetText());
@@ -3770,11 +3928,11 @@ UsdStage::_HandleLayersDidChange(
                 }
 
                 if (willRecompose) {
-                    _AddAffectedStagePaths(layerAndChangelist.first, sdfPath, 
+                    _AddAffectedStagePaths(layer, sdfPath, 
                                            *_cache, &recomposeChanges, &entry);
                 }
                 if (didChangeActive) {
-                    _AddAffectedStagePaths(layerAndChangelist.first, sdfPath, 
+                    _AddAffectedStagePaths(layer, sdfPath, 
                                            *_cache, &changedActivePaths);
                 }
             }
@@ -3787,8 +3945,7 @@ UsdStage::_HandleLayersDidChange(
 
                 if (willRecompose) {
                     _AddAffectedStagePaths(
-                        layerAndChangelist.first, sdfPath, 
-                                       *_cache, &otherResyncChanges, &entry);
+                        layer, sdfPath, *_cache, &otherResyncChanges, &entry);
                 }
             }
 
@@ -3796,7 +3953,7 @@ UsdStage::_HandleLayersDidChange(
             // scene paths separately so we can notify clients about the
             // changes.
             if (!willRecompose) {
-                _AddAffectedStagePaths(layerAndChangelist.first, sdfPath, 
+                _AddAffectedStagePaths(layer, sdfPath, 
                                   *_cache, &otherInfoChanges, &entry);
             }
         }
@@ -3825,19 +3982,20 @@ UsdStage::_HandleLayersDidChange(
     _Recompose(changes, &recomposeChanges);
 
     // Filter out all changes to objects beneath instances and remap
-    // them to the corresponding object in the instance's master. Do this
+    // them to the corresponding object in the instance's prototype. Do this
     // after _Recompose so that the instancing cache is up-to-date.
-    auto remapChangesToMasters = [this](_PathsToChangesMap* changes) {
-        std::vector<_PathsToChangesMap::value_type> masterChanges;
+    auto remapChangesToPrototypes = [this](_PathsToChangesMap* changes) {
+        std::vector<_PathsToChangesMap::value_type> prototypeChanges;
         for (auto it = changes->begin(); it != changes->end(); ) {
             if (_IsObjectDescendantOfInstance(it->first)) {
                 const SdfPath primIndexPath = 
                     it->first.GetAbsoluteRootOrPrimPath();
-                for (const SdfPath& pathInMaster :
-                     _instanceCache->GetPrimsInMastersUsingPrimIndexPath(
+                for (const SdfPath& pathInPrototype :
+                     _instanceCache->GetPrimsInPrototypesUsingPrimIndexPath(
                          primIndexPath)) {
-                    masterChanges.emplace_back(
-                        it->first.ReplacePrefix(primIndexPath, pathInMaster), 
+                    prototypeChanges.emplace_back(
+                        it->first.ReplacePrefix(
+                            primIndexPath, pathInPrototype), 
                         it->second);
                 }
                 it = changes->erase(it);
@@ -3846,15 +4004,15 @@ UsdStage::_HandleLayersDidChange(
             ++it;
         }
 
-        for (const auto& entry : masterChanges) {
+        for (const auto& entry : prototypeChanges) {
             auto& value = (*changes)[entry.first];
             value.insert(value.end(), entry.second.begin(), entry.second.end());
         }
     };
 
-    remapChangesToMasters(&recomposeChanges);
-    remapChangesToMasters(&otherResyncChanges);
-    remapChangesToMasters(&otherInfoChanges);
+    remapChangesToPrototypes(&recomposeChanges);
+    remapChangesToPrototypes(&otherResyncChanges);
+    remapChangesToPrototypes(&otherInfoChanges);
 
     // Add in all other paths that are marked as resynced.
     if (recomposeChanges.empty()) {
@@ -3991,9 +4149,9 @@ UsdStage::_RecomposePrims(const PcpChanges &changes,
     // Invalidate the clip cache, but keep the clips alive for the duration
     // of recomposition in the (likely) case that clip data hasn't changed
     // and the underlying clip layer can be reused.
-    Usd_ClipCache::Lifeboat clipLifeboat;
+    Usd_ClipCache::Lifeboat clipLifeboat(*_clipCache);
     for (const auto& entry : *pathsToRecompose) {
-        _clipCache->InvalidateClipsForPrim(entry.first, &clipLifeboat);
+        _clipCache->InvalidateClipsForPrim(entry.first);
     }
 
     // Ask Pcp to compute all the prim indexes in parallel, stopping at
@@ -4010,11 +4168,11 @@ UsdStage::_RecomposePrims(const PcpChanges &changes,
         // Instance prims don't expose any name children, so we don't
         // need to recompose any prim index beneath instance prim 
         // indexes *unless* they are being used as the source index
-        // for a master.
+        // for a prototype.
         if (_instanceCache->IsPathDescendantToAnInstance(path)) {
-            const bool primIndexUsedByMaster = 
-                _instanceCache->MasterUsesPrimIndexPath(path);
-            if (!primIndexUsedByMaster) {
+            const bool primIndexUsedByPrototype = 
+                _instanceCache->PrototypeUsesPrimIndexPath(path);
+            if (!primIndexUsedByPrototype) {
                 TF_DEBUG(USD_CHANGES).Msg(
                     "Ignoring elided prim <%s>\n", path.GetText());
                 continue;
@@ -4035,10 +4193,10 @@ UsdStage::_RecomposePrims(const PcpChanges &changes,
     _ComposePrimIndexesInParallel(
         primPathsToRecompose, "recomposing stage", &instanceChanges);
     
-    // Determine what instance master prims on this stage need to
+    // Determine what instance prototype prims on this stage need to
     // be recomposed due to instance prim index changes.
-    typedef TfHashMap<SdfPath, SdfPath, SdfPath::Hash> _MasterToPrimIndexMap;
-    _MasterToPrimIndexMap masterToPrimIndexMap;
+    typedef TfHashMap<SdfPath, SdfPath, SdfPath::Hash> _PrototypeToPrimIndexMap;
+    _PrototypeToPrimIndexMap prototypeToPrimIndexMap;
 
     const bool pathsContainsAbsRoot = 
         pathsToRecompose->begin()->first == SdfPath::AbsoluteRootPath();
@@ -4049,43 +4207,45 @@ UsdStage::_RecomposePrims(const PcpChanges &changes,
     const size_t origNumPathsToRecompose = pathsToRecompose->size();
     for (const auto& entry : *pathsToRecompose) {
         const SdfPath& path = entry.first;
-        // Add Corresponding inMasterPaths for any instance or proxy paths in
+        // Add corresponding inPrototypePaths for any instance or proxy paths in
         // pathsToRecompose
-        for (const SdfPath& inMasterPath :
-                 _instanceCache->GetPrimsInMastersUsingPrimIndexPath(path)) {
-            masterToPrimIndexMap[inMasterPath] = path;
-            (*pathsToRecompose)[inMasterPath];
+        for (const SdfPath& inPrototypePath :
+                 _instanceCache->GetPrimsInPrototypesUsingPrimIndexPath(path)) {
+            prototypeToPrimIndexMap[inPrototypePath] = path;
+            (*pathsToRecompose)[inPrototypePath];
         }
-        // Add any unchanged masters whose instances are descendents of paths in
-        // pathsToRecompose
-        for (const std::pair<SdfPath, SdfPath>& masterSourceIndexPair:
-                _instanceCache->GetMastersUsingPrimIndexPathOrDescendents(path)) 
+        // Add any unchanged prototypes whose instances are descendents of paths
+        // in pathsToRecompose
+        for (const std::pair<SdfPath, SdfPath>& prototypeSourceIndexPair:
+                _instanceCache->GetPrototypesUsingPrimIndexPathOrDescendents(
+                    path))
         {
-            const SdfPath& masterPath = masterSourceIndexPair.first;
-            const SdfPath& sourceIndexPath = masterSourceIndexPair.second;
-            masterToPrimIndexMap[masterPath] = sourceIndexPath;
-            (*pathsToRecompose)[masterPath];
+            const SdfPath& prototypePath = prototypeSourceIndexPair.first;
+            const SdfPath& sourceIndexPath = prototypeSourceIndexPair.second;
+            prototypeToPrimIndexMap[prototypePath] = sourceIndexPath;
+            (*pathsToRecompose)[prototypePath];
         }
     }
 
-    // Add new masters paths to pathsToRecompose 
-    for (size_t i = 0; i != instanceChanges.newMasterPrims.size(); ++i) {
-        masterToPrimIndexMap[instanceChanges.newMasterPrims[i]] =
-            instanceChanges.newMasterPrimIndexes[i];
-        (*pathsToRecompose)[instanceChanges.newMasterPrims[i]];
+    // Add new prototypes paths to pathsToRecompose 
+    for (size_t i = 0; i != instanceChanges.newPrototypePrims.size(); ++i) {
+        prototypeToPrimIndexMap[instanceChanges.newPrototypePrims[i]] =
+            instanceChanges.newPrototypePrimIndexes[i];
+        (*pathsToRecompose)[instanceChanges.newPrototypePrims[i]];
     }
 
-    // Add changed masters paths to pathsToRecompose 
-    for (size_t i = 0; i != instanceChanges.changedMasterPrims.size(); ++i) {
-        masterToPrimIndexMap[instanceChanges.changedMasterPrims[i]] =
-            instanceChanges.changedMasterPrimIndexes[i];
-        (*pathsToRecompose)[instanceChanges.changedMasterPrims[i]];
+    // Add changed prototypes paths to pathsToRecompose 
+    for (size_t i = 0; i != instanceChanges.changedPrototypePrims.size(); ++i) {
+        prototypeToPrimIndexMap[instanceChanges.changedPrototypePrims[i]] =
+            instanceChanges.changedPrototypePrimIndexes[i];
+        (*pathsToRecompose)[instanceChanges.changedPrototypePrims[i]];
     }
 
     // If pseudoRoot is present in pathsToRecompose, then the only other prims
-    // in pathsToRecompose can be master prims (added above), in which case we 
-    // do not want to remove these masters. If not we need to make sure any
-    // descendents of masters are removed if corresponding master is present
+    // in pathsToRecompose can be prototype prims (added above), in which case
+    // we do not want to remove these prototypes. If not we need to make sure
+    // any descendents of prototypes are removed if corresponding prototype is
+    // present
     if (!pathsContainsAbsRoot && 
             pathsToRecompose->size() != origNumPathsToRecompose) {
         _RemoveDescendentEntries(pathsToRecompose);
@@ -4101,7 +4261,7 @@ UsdStage::_RecomposePrims(const PcpChanges &changes,
         &subtreesToRecompose);
 
     // Recompose subtrees.
-    if (masterToPrimIndexMap.empty()) {
+    if (prototypeToPrimIndexMap.empty()) {
         _ComposeSubtreesInParallel(subtreesToRecompose);
     }
     else {
@@ -4110,18 +4270,18 @@ UsdStage::_RecomposePrims(const PcpChanges &changes,
         primIndexPathsForSubtrees.reserve(subtreesToRecompose.size());
         for (const auto& prim : subtreesToRecompose) {
             primIndexPathsForSubtrees.push_back(TfMapLookupByValue(
-                masterToPrimIndexMap, prim->GetPath(), prim->GetPath()));
+                prototypeToPrimIndexMap, prim->GetPath(), prim->GetPath()));
         }
         _ComposeSubtreesInParallel(
             subtreesToRecompose, &primIndexPathsForSubtrees);
     }
 
-    // Destroy dead master subtrees, making sure to record them in
+    // Destroy dead prototype subtrees, making sure to record them in
     // paths to recompose for notifications.
-    for (const SdfPath& p : instanceChanges.deadMasterPrims) {
+    for (const SdfPath& p : instanceChanges.deadPrototypePrims) {
         (*pathsToRecompose)[p];
     }
-    _DestroyPrimsInParallel(instanceChanges.deadMasterPrims);
+    _DestroyPrimsInParallel(instanceChanges.deadPrototypePrims);
 }
 
 
@@ -4151,26 +4311,26 @@ UsdStage::_ComputeSubtreesToRecompose(
             continue;
         }
 
-        // Add masters to list of subtrees to recompose and instantiate any 
-        // new master not present in the primMap from before
-        if (_instanceCache->IsMasterPath(*i)) {
+        // Add prototypes to list of subtrees to recompose and instantiate any 
+        // new prototype not present in the primMap from before
+        if (_instanceCache->IsPrototypePath(*i)) {
             PathToNodeMap::const_iterator itr = _primMap.find(*i);
-            Usd_PrimDataPtr masterPrim;
+            Usd_PrimDataPtr prototypePrim;
             if (itr != _primMap.end()) {
-                // should be a changed master if already in the primMap
-                masterPrim = itr->second.get();
+                // should be a changed prototype if already in the primMap
+                prototypePrim = itr->second.get();
             } else {
-                // newMaster should be absent from the primMap, instantiate
+                // newPrototype should be absent from the primMap, instantiate
                 // these now to be added to subtreesToRecompose
-                masterPrim = _InstantiateMasterPrim(*i);
+                prototypePrim = _InstantiatePrototypePrim(*i);
             }
-            subtreesToRecompose->push_back(masterPrim);
+            subtreesToRecompose->push_back(prototypePrim);
             ++i;
             continue;
         }
 
-        // Collect all non-master prims (including descendants of masters) to be
-        // added to subtreesToRecompute
+        // Collect all non-prototype prims (including descendants of prototypes)
+        // to be added to subtreesToRecompute
         SdfPath const &parentPath = i->GetParentPath();
         PathToNodeMap::const_iterator parentIt = _primMap.find(parentPath);
         if (parentIt != _primMap.end()) {
@@ -4183,21 +4343,21 @@ UsdStage::_ComputeSubtreesToRecompose(
 
             // Recompose parent's list of children.
             auto parent = parentIt->second.get();
-            _ComposeChildren(parent,
-                             parent->IsInMaster() ? nullptr : &_populationMask,
-                             /*recurse=*/false);
+            _ComposeChildren(
+                parent, parent->IsInPrototype() ? nullptr : &_populationMask,
+                /*recurse=*/false);
 
             // Recompose the subtree for each affected sibling.
             do {
                 PathToNodeMap::const_iterator primIt = _primMap.find(*i);
                 if (primIt != _primMap.end()) {
                     subtreesToRecompose->push_back(primIt->second.get());
-                } else if (_instanceCache->IsMasterPath(*i)) {
-                    // If this path is a master path and is not present in the
-                    // primMap, then this must be a newMaster added during this
-                    // processing, instantiate and add it.
-                    Usd_PrimDataPtr masterPrim = _InstantiateMasterPrim(*i);
-                    subtreesToRecompose->push_back(masterPrim);
+                } else if (_instanceCache->IsPrototypePath(*i)) {
+                    // If this path is a prototype path and is not present in
+                    // the primMap, then this must be a new prototype added
+                    // during this processing, instantiate and add it.
+                    Usd_PrimDataPtr protoPrim = _InstantiatePrototypePrim(*i);
+                    subtreesToRecompose->push_back(protoPrim);
                 }
                 ++i;
             } while (i != end && i->GetParentPath() == parentPath);
@@ -4278,13 +4438,13 @@ UsdStage::_ComposePrimIndexesInParallel(
         instanceChanges->AppendChanges(changes);
     }
 
-    // After processing changes, we may discover that some master prims
+    // After processing changes, we may discover that some prototype prims
     // need to change their source prim index. This may be because their
     // previous source prim index was destroyed or was no longer an
     // instance. Compose the new source prim indexes.
-    if (!changes.changedMasterPrims.empty()) {
+    if (!changes.changedPrototypePrims.empty()) {
         _ComposePrimIndexesInParallel(
-            changes.changedMasterPrimIndexes, context, instanceChanges);
+            changes.changedPrototypePrimIndexes, context, instanceChanges);
     }
 }
 
@@ -4476,22 +4636,22 @@ _RemapTargetPaths(SdfPathVector* targetPaths,
     }
 }
 
-// Remove any paths to master prims or descendants from given target paths
+// Remove any paths to prototype prims or descendants from given target paths
 // for srcProp. Issues a warning if any paths were removed.
 void
-_RemoveMasterTargetPaths(const UsdProperty& srcProp, 
+_RemovePrototypeTargetPaths(const UsdProperty& srcProp, 
                          SdfPathVector* targetPaths)
 {
     auto removeIt = std::remove_if(
         targetPaths->begin(), targetPaths->end(),
-        Usd_InstanceCache::IsPathInMaster);
+        Usd_InstanceCache::IsPathInPrototype);
     if (removeIt == targetPaths->end()) {
         return;
     }
 
     TF_WARN(
         "Some %s paths from <%s> could not be flattened because "
-        "they targeted objects within an instancing master.",
+        "they targeted objects within an instancing prototype.",
         srcProp.Is<UsdAttribute>() ? 
             "attribute connection" : "relationship target",
         srcProp.GetPath().GetText());
@@ -4499,43 +4659,44 @@ _RemoveMasterTargetPaths(const UsdProperty& srcProp,
     targetPaths->erase(removeIt, targetPaths->end());
 }
 
-// We want to give generated masters in the flattened stage
+// We want to give generated prototypes in the flattened stage
 // reserved(using '__' as a prefix), unclashing paths, however,
-// we don't want to use the '__Master' paths which have special
+// we don't want to use the '__Prototype' paths which have special
 // meaning to UsdStage. So we create a mapping between our generated
-// 'Flattened_Master'-style paths and the '__Master' paths.
+// 'Flattened_Prototype'-style paths and the '__Prototype' paths.
 _PathRemapping
-_GenerateFlattenedMasterPath(const std::vector<UsdPrim>& masters)
+_GenerateFlattenedPrototypePath(const std::vector<UsdPrim>& prototypes)
 {
-    size_t primMasterId = 1;
+    size_t primPrototypeId = 1;
 
-    const auto generatePathName = [&primMasterId]() {
-        return SdfPath(TfStringPrintf("/Flattened_Master_%lu", 
-                                      primMasterId++));
+    const auto generatePathName = [&primPrototypeId]() {
+        return SdfPath(TfStringPrintf("/Flattened_Prototype_%lu", 
+                                      primPrototypeId++));
     };
 
-    _PathRemapping masterToFlattened;
+    _PathRemapping prototypeToFlattened;
 
-    for (auto const& masterPrim : masters) {
-        SdfPath flattenedMasterPath;
-        const auto masterPrimPath = masterPrim.GetPath();
+    for (auto const& prototypePrim : prototypes) {
+        SdfPath flattenedPrototypePath;
+        const auto prototypePrimPath = prototypePrim.GetPath();
 
-        auto masterPathLookup = masterToFlattened.find(masterPrimPath);
-        if (masterPathLookup == masterToFlattened.end()) {
+        auto prototypePathLookup = prototypeToFlattened.find(prototypePrimPath);
+        if (prototypePathLookup == prototypeToFlattened.end()) {
             // We want to ensure that we don't clash with user
             // prims in the unlikely even they named it Flatten_xxx
-            flattenedMasterPath = generatePathName();
-            const auto stage = masterPrim.GetStage();
-            while (stage->GetPrimAtPath(flattenedMasterPath)) {
-                flattenedMasterPath = generatePathName();
+            flattenedPrototypePath = generatePathName();
+            const auto stage = prototypePrim.GetStage();
+            while (stage->GetPrimAtPath(flattenedPrototypePath)) {
+                flattenedPrototypePath = generatePathName();
             }
-            masterToFlattened.emplace(masterPrimPath, flattenedMasterPath);
+            prototypeToFlattened.emplace(
+                prototypePrimPath, flattenedPrototypePath);
         } else {
-            flattenedMasterPath = masterPathLookup->second;
+            flattenedPrototypePath = prototypePathLookup->second;
         }     
     }
 
-    return masterToFlattened;
+    return prototypeToFlattened;
 }
 
 void
@@ -4621,7 +4782,7 @@ _CopyProperty(const UsdProperty &prop,
         attr.GetConnections(&sources);
         if (!sources.empty()) {
             _RemapTargetPaths(&sources, pathRemapping);
-            _RemoveMasterTargetPaths(prop, &sources);
+            _RemovePrototypeTargetPaths(prop, &sources);
             sdfAttr->GetConnectionPathList().GetExplicitItems() = sources;
         }
      }
@@ -4642,7 +4803,7 @@ _CopyProperty(const UsdProperty &prop,
          rel.GetTargets(&targets);
          if (!targets.empty()) {
              _RemapTargetPaths(&targets, pathRemapping);
-             _RemoveMasterTargetPaths(prop, &targets);
+             _RemovePrototypeTargetPaths(prop, &targets);
              sdfRel->GetTargetPathList().GetExplicitItems() = targets;
          }
      }
@@ -4651,7 +4812,7 @@ _CopyProperty(const UsdProperty &prop,
 void
 _CopyPrim(const UsdPrim &usdPrim, 
           const SdfLayerHandle &layer, const SdfPath &path,
-          const _PathRemapping &masterToFlattened)
+          const _PathRemapping &prototypeToFlattened)
 {
     SdfPrimSpecHandle newPrim;
     
@@ -4669,12 +4830,12 @@ _CopyPrim(const UsdPrim &usdPrim,
     }
 
     if (usdPrim.IsInstance()) {
-        const auto flattenedMasterPath = 
-            masterToFlattened.at(usdPrim.GetMaster().GetPath());
+        const auto flattenedPrototypePath = 
+            prototypeToFlattened.at(usdPrim.GetPrototype().GetPath());
 
-        // Author an internal reference to our flattened master prim
+        // Author an internal reference to our flattened prototype prim
         newPrim->GetReferenceList().Add(SdfReference(std::string(),
-                                        flattenedMasterPath));
+                                        flattenedPrototypePath));
     }
     
     _CopyAuthoredMetadata(usdPrim, newPrim);
@@ -4691,27 +4852,27 @@ _CopyPrim(const UsdPrim &usdPrim,
     
     for (auto const &prop : usdPrim.GetProperties()) {
         if (prop.IsAuthored() || hasValue(prop)) {
-            _CopyProperty(prop, newPrim, prop.GetName(), masterToFlattened,
+            _CopyProperty(prop, newPrim, prop.GetName(), prototypeToFlattened,
                           SdfLayerOffset());
         }
     }
 }
 
 void
-_CopyMasterPrim(const UsdPrim &masterPrim,
-                const SdfLayerHandle &destinationLayer,
-                const _PathRemapping &masterToFlattened)
+_CopyPrototypePrim(const UsdPrim &prototypePrim,
+                   const SdfLayerHandle &destinationLayer,
+                   const _PathRemapping &prototypeToFlattened)
 {
-    const auto& flattenedMasterPath 
-        = masterToFlattened.at(masterPrim.GetPath());
+    const auto& flattenedPrototypePath 
+        = prototypeToFlattened.at(prototypePrim.GetPath());
 
-    for (UsdPrim child: UsdPrimRange::AllPrims(masterPrim)) {
+    for (UsdPrim child: UsdPrimRange::AllPrims(prototypePrim)) {
         // We need to update the child path to use the Flatten name.
         const auto flattenedChildPath = child.GetPath().ReplacePrefix(
-            masterPrim.GetPath(), flattenedMasterPath);
+            prototypePrim.GetPath(), flattenedPrototypePath);
 
         _CopyPrim(child, destinationLayer, flattenedChildPath, 
-                  masterToFlattened);
+                  prototypeToFlattened);
     }
 }
 
@@ -4821,16 +4982,17 @@ UsdStage::Flatten(bool addSourceFileComment) const
 
     // Preemptively populate our mapping. This allows us to populate
     // nested instances in the destination layer much more simply.
-    const auto masterToFlattened = _GenerateFlattenedMasterPath(GetMasters());
+    const auto prototypeToFlattened =
+        _GenerateFlattenedPrototypePath(GetPrototypes());
 
-    // We author the master overs first to produce simpler 
+    // We author the prototype overs first to produce simpler 
     // assets which have them grouped at the top of the file.
-    for (auto const& master : GetMasters()) {
-        _CopyMasterPrim(master, flatLayer, masterToFlattened);
+    for (auto const& prototype : GetPrototypes()) {
+        _CopyPrototypePrim(prototype, flatLayer, prototypeToFlattened);
     }
 
     for (UsdPrim prim: UsdPrimRange::AllPrims(GetPseudoRoot())) {
-        _CopyPrim(prim, flatLayer, prim.GetPath(), masterToFlattened);
+        _CopyPrim(prim, flatLayer, prim.GetPath(), prototypeToFlattened);
     }
 
     if (addSourceFileComment) {
@@ -4888,7 +5050,10 @@ UsdStage::_FlattenProperty(const UsdProperty &srcProp,
     {
         SdfChangeBlock block;
 
-        SdfPrimSpecHandle primSpec = _CreatePrimSpecForEditing(dstParent);
+        // Use the edit target from the destination prim's stage, since it may
+        // be different from this stage
+        SdfPrimSpecHandle primSpec = 
+            dstParent.GetStage()->_CreatePrimSpecForEditing(dstParent);
         if (!primSpec) {
             // _CreatePrimSpecForEditing will have already issued any
             // coding errors, so just bail out.
@@ -4927,8 +5092,11 @@ UsdStage::_FlattenProperty(const UsdProperty &srcProp,
 
         // Apply offsets that affect the edit target to flattened time 
         // samples to ensure they resolve to the expected value.
+        // Use the edit target from the destination prim's stage, since it may 
+        // be different from this stage.
         const SdfLayerOffset stageToLayerOffset = 
-            GetEditTarget().GetMapFunction().GetTimeOffset().GetInverse();
+            dstParent.GetStage()->GetEditTarget().GetMapFunction().
+            GetTimeOffset().GetInverse();
 
         // Copy authored property values and metadata.
         _CopyProperty(srcProp, primSpec, dstName, remapping, stageToLayerOffset);
@@ -4993,13 +5161,6 @@ template <class T>
 void _UncheckedSwap(VtValue *value, T& val) {
     value->UncheckedSwap(val);
 }
-
-template <class T>
-static void
-_Set(SdfAbstractDataValue *dv, T const &val) { dv->StoreValue(val); }
-template <class T>
-static void _Set(VtValue *value, T const &val) { *value = val; }
-
 
 namespace {
 
@@ -5206,7 +5367,7 @@ struct ValueComposerBase
     template <class ValueType>
     void ConsumeExplicitValue(ValueType type) 
     {
-        _Set(_value, type);
+        Usd_SetValue(_value, type);
         _done = true;
     }
 
@@ -5771,6 +5932,45 @@ _ComposeGeneralMetadataImpl(Usd_PrimDataConstPtr primData,
     return gotOpinion || composer->IsDone();
 }
 
+// Special composing for just the pseudoroot. The pseudoroot only composes
+// metadata opinions on the absolute root path from the session and root layers.
+// Note that the pseudoroot itself doesn't provide fallbacks.
+// Returns true if an opinion was found.
+template <class Composer>
+static bool
+_ComposePseudoRootMetadataImpl(Usd_PrimDataConstPtr primData,
+                               const TfToken& fieldName,
+                               const TfToken& keyPath,
+                               const SdfLayerRefPtr &rootLayer,
+                               const SdfLayerRefPtr &sessionLayer,
+                               Composer *composer)
+{
+    const SdfPath &specPath = SdfPath::AbsoluteRootPath();
+    bool gotOpinion = false;
+
+    PcpNodeRef node = primData->GetPrimIndex().GetRootNode();
+
+    // If we a have a session layer and it isn't muted, we try to consume its
+    // opinion first. The session layer will be the first layer in the 
+    // layer stack unless it is muted.
+    if (sessionLayer && 
+        node.GetLayerStack()->GetLayers().front() == sessionLayer) {
+        // Consume an authored opinion here, if one exists.
+        gotOpinion = composer->ConsumeAuthored(
+            node, sessionLayer, specPath, fieldName, keyPath);
+        if (composer->IsDone()) {
+            return true;
+        }
+    }
+
+    // Consume an authored opinion from the root layer (which cannot be muted).
+    gotOpinion |= composer->ConsumeAuthored(
+        node, rootLayer, specPath, fieldName, keyPath);
+
+    // Return whether we got an opinion from either layer.
+    return gotOpinion;
+}
+
 // --------------------------------------------------------------------- //
 // Specialized Metadata Resolution
 // --------------------------------------------------------------------- //
@@ -6092,12 +6292,12 @@ UsdStage::_GetPropCustomImpl(const UsdProperty &prop, bool useFallbacks,
 }
 
 template <class Composer>
-void
-UsdStage::_GetPrimTypeNameImpl(const UsdPrim &prim, bool useFallbacks,
-                               Composer *composer) const
+static void
+_GetPrimTypeNameImpl(Usd_PrimDataConstPtr primData, 
+                     bool useFallbacks, Composer *composer)
 {
     TRACE_FUNCTION();
-    for (Usd_Resolver res(&prim.GetPrimIndex());
+    for (Usd_Resolver res(&primData->GetPrimIndex());
          res.IsValid(); res.NextLayer()) {
         TfToken tok;
         if (res.GetLayer()->HasField(
@@ -6123,10 +6323,10 @@ _GetPrimSpecifierImpl(Usd_PrimDataConstPtr primData,
         return false;
     }
 
-    // Instance master prims are always defined -- see Usd_PrimData for
+    // Instance prototype prims are always defined -- see Usd_PrimData for
     // details. Since the fallback for specifier is 'over', we have to
     // handle these prims specially here.
-    if (primData->IsMaster()) {
+    if (primData->IsPrototype()) {
         composer->ConsumeExplicitValue(SdfSpecifierDef);
         return true;
     }
@@ -6294,53 +6494,60 @@ _GetListOpMetadataImpl(Usd_PrimDataConstPtr primData,
 
 template <class Composer>
 bool
-UsdStage::_GetSpecialMetadataImpl(const UsdObject &obj,
-                                  const TfToken &fieldName,
-                                  const TfToken &keyPath,
-                                  bool useFallbacks,
-                                  Composer *composer) const
+UsdStage::_GetSpecialPropMetadataImpl(const UsdObject &obj,
+                                      const TfToken &fieldName,
+                                      const TfToken &keyPath,
+                                      bool useFallbacks,
+                                      Composer *composer) const
 {
     // Dispatch to special-case composition rules based on type and field.
     // Return true if the given field was handled, false otherwise.
-    if (obj.Is<UsdProperty>()) {
-        if (obj.Is<UsdAttribute>()) {
-            if (fieldName == SdfFieldKeys->TypeName) {
-                _GetAttrTypeImpl(
-                    obj.As<UsdAttribute>(), fieldName, useFallbacks, composer);
-                return true;
-            } else if (fieldName == SdfFieldKeys->Variability) {
-                _GetAttrVariabilityImpl(
-                    obj.As<UsdAttribute>(), useFallbacks, composer);
-                return true;
-            }
-        }
-        if (fieldName == SdfFieldKeys->Custom) {
-            _GetPropCustomImpl(obj.As<UsdProperty>(), useFallbacks, composer);
-            return true;
-        }
-    } else if (obj.Is<UsdPrim>()) {
+    if (obj.Is<UsdAttribute>()) {
         if (fieldName == SdfFieldKeys->TypeName) {
-            _GetPrimTypeNameImpl(obj.As<UsdPrim>(), useFallbacks, composer);
+            _GetAttrTypeImpl(
+                obj.As<UsdAttribute>(), fieldName, useFallbacks, composer);
             return true;
-        } else if (fieldName == SdfFieldKeys->Specifier) {
-            _GetPrimSpecifierImpl(
-                get_pointer(obj._Prim()), useFallbacks, composer);
-            return true;
-        } else if (fieldName == SdfFieldKeys->Kind) {
-            // XXX: We do not not respect fallback kind values during
-            // Usd_PrimData composition (see _GetKind), but we do allow
-            // fallback values here to maintain existing behavior. However,
-            // we may want to force the useFallbacks flag to false here for
-            // consistency.
-            _GetPrimKindImpl(
-                get_pointer(obj._Prim()), useFallbacks, composer);
-            return true;
-        } else if (fieldName == SdfFieldKeys->Active) {
-            // XXX: See comment in the handling of 'kind' re: fallback values.
-            _GetPrimActiveImpl(
-                get_pointer(obj._Prim()), useFallbacks, composer);
+        } else if (fieldName == SdfFieldKeys->Variability) {
+            _GetAttrVariabilityImpl(
+                obj.As<UsdAttribute>(), useFallbacks, composer);
             return true;
         }
+    }
+    if (fieldName == SdfFieldKeys->Custom) {
+        _GetPropCustomImpl(obj.As<UsdProperty>(), useFallbacks, composer);
+        return true;
+    }
+    return false;
+}
+
+template <class Composer>
+static bool
+_GetSpecialPrimMetadataImpl(Usd_PrimDataConstPtr primData,
+                            const TfToken &fieldName,
+                            const TfToken &keyPath,
+                            bool useFallbacks,
+                            Composer *composer)
+{
+    // Dispatch to special-case composition rules based on type and field.
+    // Return true if the given field was handled, false otherwise.
+    if (fieldName == SdfFieldKeys->TypeName) {
+        _GetPrimTypeNameImpl(primData, useFallbacks, composer);
+        return true;
+    } else if (fieldName == SdfFieldKeys->Specifier) {
+        _GetPrimSpecifierImpl(primData, useFallbacks, composer);
+        return true;
+    } else if (fieldName == SdfFieldKeys->Kind) {
+        // XXX: We do not not respect fallback kind values during
+        // Usd_PrimData composition (see _GetKind), but we do allow
+        // fallback values here to maintain existing behavior. However,
+        // we may want to force the useFallbacks flag to false here for
+        // consistency.
+        _GetPrimKindImpl(primData, useFallbacks, composer);
+        return true;
+    } else if (fieldName == SdfFieldKeys->Active) {
+        // XXX: See comment in the handling of 'kind' re: fallback values.
+        _GetPrimActiveImpl(primData, useFallbacks, composer);
+        return true;
     }
 
     return false;
@@ -6359,9 +6566,28 @@ UsdStage::_GetMetadataImpl(
     TfErrorMark m;
 
     // Handle special cases.
-    if (_GetSpecialMetadataImpl(
-            obj, fieldName, keyPath, useFallbacks, composer)) {
-        return composer->IsDone() && m.IsClean();
+    if (obj.Is<UsdProperty>()) {
+        if (_GetSpecialPropMetadataImpl(
+                obj, fieldName, keyPath, useFallbacks, composer)) {
+            return composer->IsDone() && m.IsClean();
+        }
+    } else if (obj.Is<UsdPrim>()) {
+        // If the prim is the pseudo root, we have a special metadata 
+        // composition to perform as the pseudoroot only composes metadata
+        // opinions from the session layer and root layer.
+        if (obj._Prim()->IsPseudoRoot()) {
+            // Note that this function returns true if an opinion was found so
+            // we don't need to check composer->IsDone(). IsDone will always
+            // return false for dictionary metadata on the pseudo root since
+            // we don't have fallbacks.
+            return _ComposePseudoRootMetadataImpl(
+                get_pointer(obj._Prim()), fieldName, keyPath,
+                _rootLayer, _sessionLayer, composer) && m.IsClean();
+        } else if (_GetSpecialPrimMetadataImpl(
+            get_pointer(obj._Prim()), fieldName, keyPath, useFallbacks, 
+            composer)) {
+            return composer->IsDone() && m.IsClean();
+        }
     }
 
     return _GetGeneralMetadataImpl(
@@ -6439,25 +6665,24 @@ UsdStage::_HasMetadata(const UsdObject &obj, const TfToken& fieldName,
     return composer.IsDone();
 }
 
-TfTokenVector
-UsdStage::_ListMetadataFields(const UsdObject &obj, bool useFallbacks) const
+static
+SdfSpecType
+_ListMetadataFieldsImpl(Usd_PrimDataConstPtr primData,
+                        const TfToken &propName,
+                        bool useFallbacks,
+                        TfTokenVector *result)
 {
     TRACE_FUNCTION();
 
-    TfTokenVector result;
-
-    static TfToken empty;
-    const TfToken &propName = obj.Is<UsdProperty>() ? obj.GetName() : empty;
-
-    Usd_Resolver res(&obj.GetPrim().GetPrimIndex());
+    Usd_Resolver res(&primData->GetPrimIndex());
     SdfPath specPath = res.GetLocalPath(propName);
     PcpNodeRef lastNode = res.GetNode();
     SdfSpecType specType = SdfSpecTypeUnknown;
 
-    const UsdPrimDefinition &primDef = obj.GetPrim().GetPrimDefinition();
+    const UsdPrimDefinition &primDef = primData->GetPrimDefinition();
 
     // If this is a builtin property, determine specType from the definition.
-    if (obj.Is<UsdProperty>()) {
+    if (!propName.IsEmpty()) {
         specType = primDef.GetSpecType(propName);
     }
 
@@ -6473,8 +6698,79 @@ UsdStage::_ListMetadataFields(const UsdObject &obj, bool useFallbacks) const
 
         for (const auto& fieldName : layer->ListFields(specPath)) {
             if (!_IsPrivateFieldKey(fieldName))
-                result.push_back(fieldName);
+                result->push_back(fieldName);
         }
+    }
+
+    // If including fallbacks, add any defined metadata fields from the prim
+    // definition for the property (or the prim if the prop name is empty). 
+    if (useFallbacks) {
+        const TfTokenVector fallbackFields = propName.IsEmpty() ?
+            primDef.ListMetadataFields() : 
+            primDef.ListPropertyMetadataFields(propName);
+        result->insert(result->end(), 
+                       fallbackFields.begin(), fallbackFields.end());
+    }
+
+    return specType;
+}
+
+static
+SdfSpecType
+_ListPseudoRootMetadataFieldsImpl(Usd_PrimDataConstPtr primData, 
+                                  const SdfLayerRefPtr &rootLayer,
+                                  const SdfLayerRefPtr &sessionLayer,
+                                  TfTokenVector *result)
+{
+    TRACE_FUNCTION();
+
+    const SdfPath &specPath = SdfPath::AbsoluteRootPath();
+    PcpNodeRef node = primData->GetPrimIndex().GetRootNode();
+
+    // If we a have a session layer and it isn't muted, get its authored layer
+    // metadata fields. The session layer will be the first layer in the 
+    // layer stack unless it is muted.
+    if (sessionLayer && 
+        node.GetLayerStack()->GetLayers().front() == sessionLayer) {
+        for (const auto& fieldName : sessionLayer->ListFields(specPath)) {
+            if (!_IsPrivateFieldKey(fieldName)) {
+                result->push_back(fieldName);
+            }
+        }
+    }
+
+    // Get all authored layer metadata fields from the root layer (which can't
+    // be muted).
+    for (const auto& fieldName : rootLayer->ListFields(specPath)) {
+        if (!_IsPrivateFieldKey(fieldName)) {
+            result->push_back(fieldName);
+        }
+    }
+
+    return SdfSpecTypePseudoRoot;
+}
+
+TfTokenVector
+UsdStage::_ListMetadataFields(const UsdObject &obj, bool useFallbacks) const
+{
+    TRACE_FUNCTION();
+
+    TfTokenVector result;
+
+    SdfSpecType specType = SdfSpecTypeUnknown;
+    Usd_PrimDataConstPtr primData = get_pointer(obj._Prim());
+    if (obj.Is<UsdProperty>()) {
+        // List metadata fields for property
+        specType = _ListMetadataFieldsImpl(
+            primData, obj.GetName(), useFallbacks, &result);
+    } else if (obj._Prim()->IsPseudoRoot()) {
+        // Custom implementation for listing metadata for the pseudo root.
+        specType = _ListPseudoRootMetadataFieldsImpl(
+            primData, _rootLayer, _sessionLayer, &result);
+    } else {
+        // List metadata fields for non pseudo root prims.
+        specType = _ListMetadataFieldsImpl(
+            primData, TfToken(), useFallbacks, &result);
     }
 
     // Insert required fields for spec type.
@@ -6485,15 +6781,6 @@ UsdStage::_ListMetadataFields(const UsdObject &obj, bool useFallbacks) const
             if (!_IsPrivateFieldKey(fieldName))
                 result.push_back(fieldName);
         }
-    }
-
-    // If including fallbacks, add any defined metadata fields from the prim
-    // definition for the property (or the prim if the prop name is empty). 
-    if (useFallbacks) {
-        const TfTokenVector fallbackFields = propName.IsEmpty() ?
-            primDef.ListMetadataFields() : 
-            primDef.ListPropertyMetadataFields(propName);
-        result.insert(result.end(), fallbackFields.begin(), fallbackFields.end());
     }
 
     // Sort & remove duplicate fields.
@@ -6527,60 +6814,107 @@ UsdStage::_GetAllMetadata(const UsdObject &obj,
 // --------------------------------------------------------------------- //
 
 static bool
-_ClipAppliesToLayerStackSite(
-    const Usd_ClipRefPtr& clip,
+_ClipsApplyToLayerStackSite(
+    const Usd_ClipSetRefPtr& clips,
     const PcpLayerStackPtr& layerStack, const SdfPath& primPathInLayerStack)
 {
-    return (layerStack == clip->sourceLayerStack
-        && primPathInLayerStack.HasPrefix(clip->sourcePrimPath));
+    return (layerStack == clips->sourceLayerStack
+            && primPathInLayerStack.HasPrefix(clips->sourcePrimPath));
 }
 
 static bool
 _ClipsApplyToNode(
-    const Usd_ClipCache::Clips& clips, 
+    const Usd_ClipSetRefPtr& clips, 
     const PcpNodeRef& node)
 {
-    return (node.GetLayerStack() == clips.sourceLayerStack
-            && node.GetPath().HasPrefix(clips.sourcePrimPath));
+    return (node.GetLayerStack() == clips->sourceLayerStack
+            && node.GetPath().HasPrefix(clips->sourcePrimPath));
+}
+
+static bool
+_ClipsContainValueForAttribute(
+    const Usd_ClipSetRefPtr& clips,
+    const SdfPath& attrSpecPath)
+{
+    // Only look for samples in clips for attributes that are
+    // marked as varying in the clip manifest (if one is present).
+    // This gives users a way to indicate that an attribute will
+    // never have samples in a clip, which can help performance.
+    // 
+    // We normally do not consider variability during value 
+    // resolution to avoid the cost of composing variability on 
+    // each value fetch. We can use it here because we're only 
+    // fetching it from a single layer, which should be cheap. 
+    // This is also convenient for users, since it allows them 
+    // to reuse assets that may have both uniform and varying 
+    // attributes as manifests.
+    if (clips->manifestClip) {
+        SdfVariability attrVariability = SdfVariabilityUniform;
+        if (clips->manifestClip->HasField(
+                attrSpecPath, SdfFieldKeys->Variability, &attrVariability)
+            && attrVariability == SdfVariabilityVarying) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static
-const std::vector<const Usd_ClipCache::Clips*>
+const std::vector<Usd_ClipSetRefPtr>
 _GetClipsThatApplyToNode(
-    const std::vector<Usd_ClipCache::Clips>& clipsAffectingPrim,
+    const std::vector<Usd_ClipSetRefPtr>& clipsAffectingPrim,
     const PcpNodeRef& node,
     const SdfPath& specPath)
 {
-    std::vector<const Usd_ClipCache::Clips*> relevantClips;
+    std::vector<Usd_ClipSetRefPtr> relevantClips;
 
     for (const auto& localClips : clipsAffectingPrim) {
-        if (_ClipsApplyToNode(localClips, node)) {
-            // Only look for samples in clips for attributes that are
-            // marked as varying in the clip manifest (if one is present).
-            // This gives users a way to indicate that an attribute will
-            // never have samples in a clip, which can help performance.
-            // 
-            // We normally do not consider variability during value 
-            // resolution to avoid the cost of composing variability on 
-            // each value fetch. We can use it here because we're only 
-            // fetching it from a single layer, which should be cheap. 
-            // This is also convenient for users, since it allows them 
-            // to reuse assets that may have both uniform and varying 
-            // attributes as manifests.
-            if (localClips.manifestClip) {
-                SdfVariability attrVariability = SdfVariabilityUniform;
-                if (!localClips.manifestClip->HasField(
-                        specPath, SdfFieldKeys->Variability, &attrVariability)
-                    || attrVariability != SdfVariabilityVarying) {
-                    continue;
-                }
-            }
-
-            relevantClips.push_back(&localClips);
+        if (_ClipsApplyToNode(localClips, node)
+            && _ClipsContainValueForAttribute(localClips, specPath)) {
+            relevantClips.push_back(localClips);
         }
     }
 
     return relevantClips;
+}
+
+static bool
+_HasTimeSamples(const SdfLayerRefPtr& source, 
+                const SdfPath& specPath, 
+                const double* time = nullptr, 
+                double* lower = nullptr, double* upper = nullptr)
+{
+    if (time) {
+        // If caller wants bracketing time samples as well, we can just use
+        // GetBracketingTimeSamplesForPath. If no samples exist, this should
+        // return false.
+        return source->GetBracketingTimeSamplesForPath(
+            specPath, *time, lower, upper);
+    }
+
+    return source->GetNumTimeSamplesForPath(specPath) > 0;
+}
+
+static bool
+_HasTimeSamples(const Usd_ClipSetRefPtr& sourceClips, 
+                const SdfPath& specPath, 
+                const double* time = nullptr, 
+                double* lower = nullptr, double* upper = nullptr)
+{
+    // Bail out immediately if this clip set does not contain values
+    // for this attribute.
+    if (!_ClipsContainValueForAttribute(sourceClips, specPath)) {
+        return false;
+    }
+
+    if (time) {
+        return sourceClips->GetBracketingTimeSamplesForPath(
+            specPath, *time, lower, upper);
+    }
+
+    // Since this clip set has declared it contains values for this
+    // attribute, we always return true.
+    return true;
 }
 
 // Helper for getting the fully resolved value from an attribute generically
@@ -6771,11 +7105,12 @@ class UsdStage_ResolveInfoAccess
 {
 public:
     template <class T>
-    static bool _GetTimeSampleValue(UsdTimeCode time, const UsdAttribute& attr,
-                             const UsdResolveInfo &info,
-                             const double *lowerHint, const double *upperHint,
-                             Usd_InterpolatorBase *interpolator,
-                             T *result)
+    static bool _GetTimeSampleValue(
+        UsdTimeCode time, const UsdAttribute& attr,
+        const UsdResolveInfo &info,
+        const double *lowerHint, const double *upperHint,
+        Usd_InterpolatorBase *interpolator,
+        T *result)
     {
         const SdfPath specPath =
             info._primPathInLayerStack.AppendProperty(attr.GetName());
@@ -6819,45 +7154,70 @@ public:
     } 
 
     template <class T>
-    static bool _GetClipValue(UsdTimeCode time, const UsdAttribute& attr,
-                              const UsdResolveInfo &info,
-                              const Usd_ClipRefPtr &clip,
-                              double lower, double upper,
-                              Usd_InterpolatorBase *interpolator,
-                              T *result)
+    static bool _GetClipValue(
+        UsdTimeCode time, const UsdAttribute& attr,
+        const UsdResolveInfo &info,
+        const Usd_ClipSetRefPtr &clipSet, 
+        const double *lowerHint, const double *upperHint,
+        Usd_InterpolatorBase *interpolator,
+        T *result)
     {
         const SdfPath specPath =
             info._primPathInLayerStack.AppendProperty(attr.GetName());
+
+        // Note that we do not apply layer offsets to the time.
+        // Because clip metadata may be authored in different 
+        // layers in the LayerStack, each with their own 
+        // layer offsets, it is simpler to bake the effects of 
+        // those offsets into Usd_Clip.
         const double localTime = time.GetValue();
+        double upper = 0.0;
+        double lower = 0.0;
+
+        if (lowerHint && upperHint) {
+            lower = *lowerHint;
+            upper = *upperHint;
+        }
+        else {
+            _HasTimeSamples(clipSet, specPath, &localTime, &lower, &upper);
+        }
 
         TF_DEBUG(USD_VALUE_RESOLUTION).Msg(
-            "RESOLVE: reading field %s:%s from clip %s, "
+            "RESOLVE: reading field %s:%s from clip set %s, "
             "with requested time = %.3f "
             "reading from sample %.3f \n",
             specPath.GetText(),
             SdfFieldKeys->TimeSamples.GetText(),
-            TfStringify(clip->assetPath).c_str(),
+            clipSet->name.c_str(),
             localTime,
             lower);
 
         return Usd_GetOrInterpolateValue(
-            clip, specPath, localTime, lower, upper, interpolator, result);
+            clipSet, specPath, localTime, lower, upper, interpolator, result);
     }
 };
 
+// Helper structure populated by _GetResolveInfo and _ResolveInfoResolver
+// with extra information accumulated in the process. This allows clients to
+// avoid redoing work.
 template <class T>
 struct UsdStage::_ExtraResolveInfo
 {
-    _ExtraResolveInfo()
-        : lowerSample(0), upperSample(0), defaultOrFallbackValue(nullptr)
-    { }
+    // If the resolve info source is UsdResolveInfoSourceTimeSamples or
+    // UsdResolveInfoSourceValueClips and an explicit time is given to
+    // _GetResolveInfo, this will be the lower and upper bracketing time
+    // samples for that time.
+    double lowerSample = 0;
+    double upperSample = 0;
 
-    double lowerSample;
-    double upperSample;
- 
-    T* defaultOrFallbackValue;
+    // If the resolve info source is UsdResolveInfoSourceDefault or
+    // UsdResolveInfoSourceFallback and this is non-null, the default
+    // or fallback value will be copied to the object this pointer refers to.
+    T* defaultOrFallbackValue = nullptr;
 
-    Usd_ClipRefPtr clip;
+    // If the resolve info source is UsdResolveInfoSourceValueClips this will 
+    // be the Usd_ClipSet containing values for the attribute.
+    Usd_ClipSetRefPtr clipSet;
 };
 
 SdfLayerRefPtr
@@ -6881,7 +7241,17 @@ UsdStage::_GetLayerWithStrongestValue(
                 resolveInfo._layerStack->GetLayers()[resolveInfo._layerIndex];
         }
         else if (resolveInfo._source == UsdResolveInfoSourceValueClips) {
-            resultLayer = extraResolveInfo.clip->_GetLayerForClip();
+            const Usd_ClipSetRefPtr& clipSet = extraResolveInfo.clipSet;
+            const Usd_ClipRefPtr& activeClip = 
+                clipSet->GetActiveClip(time.GetValue());
+            const SdfPath specPath =
+                resolveInfo._primPathInLayerStack.AppendProperty(attr.GetName());
+
+            // If the active clip has authored time samples, the value will
+            // come from it (or at least be interpolated from it) so use that
+            // clip's layer. Otherwise the value will come from the manifest.
+            resultLayer = activeClip->HasAuthoredTimeSamples(specPath) ? 
+                activeClip->GetLayer() : clipSet->manifestClip->GetLayer();
         }
     }
     return resultLayer;
@@ -6908,8 +7278,9 @@ UsdStage::_GetValueImpl(UsdTimeCode time, const UsdAttribute &attr,
     }
     else if (resolveInfo._source == UsdResolveInfoSourceValueClips) {
         return UsdStage_ResolveInfoAccess::_GetClipValue(
-            time, attr, resolveInfo, extraResolveInfo.clip,
-            extraResolveInfo.lowerSample, extraResolveInfo.upperSample,
+            time, attr, resolveInfo, 
+            extraResolveInfo.clipSet,
+            &extraResolveInfo.lowerSample, &extraResolveInfo.upperSample,
             interpolator, result);
     }
     else if (resolveInfo._source == UsdResolveInfoSourceDefault ||
@@ -6919,76 +7290,8 @@ UsdStage::_GetValueImpl(UsdTimeCode time, const UsdAttribute &attr,
         return m.IsClean();
     }
 
-    // _GetResolveInfo should never return UsdResolveInfoSourceIsTimeDependent
-    // since we always pass it an exact time in this function.
-    TF_VERIFY(resolveInfo._source != UsdResolveInfoSourceIsTimeDependent);
-
     return false;
 }
-
-namespace 
-{
-bool
-_HasTimeSamples(const SdfLayerRefPtr& source, 
-                const SdfPath& specPath, 
-                const double* time = nullptr, 
-                double* lower = nullptr, double* upper = nullptr)
-{
-    if (time) {
-        // If caller wants bracketing time samples as well, we can just use
-        // GetBracketingTimeSamplesForPath. If no samples exist, this should
-        // return false.
-        return source->GetBracketingTimeSamplesForPath(
-            specPath, *time, lower, upper);
-    }
-
-    return source->GetNumTimeSamplesForPath(specPath) > 0;
-}
-
-bool
-_HasTimeSamples(const Usd_ClipRefPtr& source, 
-                const SdfPath& specPath, 
-                const double* time = nullptr, 
-                double* lower = nullptr, double* upper = nullptr)
-{
-    if (time) {
-        return source->GetBracketingTimeSamplesForPath(
-                    specPath, *time, lower, upper) && 
-               source->_GetNumTimeSamplesForPathInLayerForClip(specPath) != 0;
-    }
-
-    // Use this method to directly access authored time samples,
-    // disregarding 'fake' samples used by clips.
-    return source->_GetNumTimeSamplesForPathInLayerForClip(specPath) > 0;
-}
-
-enum _DefaultValueResult {
-    _DefaultValueNone = 0,
-    _DefaultValueFound,
-    _DefaultValueBlocked,
-};
-
-template <class T>    
-_DefaultValueResult 
-_HasDefault(const SdfLayerRefPtr& layer, const SdfPath& specPath, T* value)
-{
-    // We need to actually examine the default value in all cases to see
-    // if a block was authored. So, if no value to fill in was specified,
-    // we need to create a dummy one.
-    if (!value) {
-        VtValue dummy;
-        return _HasDefault(layer, specPath, &dummy);
-    }
-
-    if (layer->HasField(specPath, SdfFieldKeys->Default, value)) {
-        if (Usd_ClearValueIfBlocked(value)) {
-            return _DefaultValueBlocked;
-        }
-        return _DefaultValueFound;
-    }
-    return _DefaultValueNone;
-}
-} // end anonymous namespace
 
 // Our property stack resolver never indicates for resolution to stop
 // as we need to gather all relevant property specs in the LayerStack
@@ -7014,18 +7317,35 @@ struct UsdStage::_PropertyStackResolver {
     }
 
     bool
-    ProcessClip(const Usd_ClipRefPtr& clip,
-                const SdfPath& specPath,
-                const PcpNodeRef& node,
-                const double* time) 
+    ProcessClips(const Usd_ClipSetRefPtr& clipSet,
+                 const SdfPath& specPath,
+                 const PcpNodeRef& node,
+                 const double* time) 
     {
-        // If given a time, do a range check on the clip first.
-        if (time && (*time < clip->startTime || *time >= clip->endTime)) 
-            return false;
-
+        // Look through clips to see if they have a time sample for
+        // this attribute. If a time is given, examine just the clips
+        // that are active at that time.
         double lowerSample = 0.0, upperSample = 0.0;
-        if (_HasTimeSamples(clip, specPath, time, &lowerSample, &upperSample)) {
-            if (const auto propertySpec = clip->GetPropertyAtPath(specPath)) {
+
+        if (_HasTimeSamples(
+                clipSet, specPath, time, &lowerSample, &upperSample)) {
+
+            const Usd_ClipRefPtr& activeClip = clipSet->GetActiveClip(*time);
+
+            // If the active clip has authored time samples, the value will
+            // come from it (or at least be interpolated from it) so use the
+            // property spec from that clip. Otherwise the value will come
+            // from the manifest.
+            const Usd_ClipRefPtr& sourceClip = 
+                activeClip->HasAuthoredTimeSamples(specPath) ?
+                activeClip : clipSet->manifestClip;
+
+            if (!TF_VERIFY(sourceClip)) {
+                return false;
+            }
+
+            if (const auto propertySpec = 
+                    sourceClip->GetPropertyAtPath(specPath)) {
                 propertyStack.push_back(propertySpec);
             }
         }
@@ -7093,12 +7413,12 @@ struct UsdStage::_ResolveInfoResolver
             _resolveInfo->_source = UsdResolveInfoSourceTimeSamples;
         }
         else { 
-            _DefaultValueResult defValue = _HasDefault(
+            Usd_DefaultValueResult defValue = Usd_HasDefault(
                 layer, specPath, _extraInfo->defaultOrFallbackValue);
-            if (defValue == _DefaultValueFound) {
+            if (defValue == Usd_DefaultValueResult::Found) {
                 _resolveInfo->_source = UsdResolveInfoSourceDefault;
             }
-            else if (defValue == _DefaultValueBlocked) {
+            else if (defValue == Usd_DefaultValueResult::Blocked) {
                 _resolveInfo->_valueIsBlocked = true;
                 return ProcessFallback();
             }
@@ -7117,34 +7437,25 @@ struct UsdStage::_ResolveInfoResolver
     }
 
     bool
-    ProcessClip(const Usd_ClipRefPtr& clip,
-                const SdfPath& specPath,
-                const PcpNodeRef& node,
-                const double* time)
+    ProcessClips(const Usd_ClipSetRefPtr& clipSet,
+                 const SdfPath& specPath,
+                 const PcpNodeRef& node,
+                 const double* time)
     {
-        // If given a time, do a range check on the clip first.
-        if (time && (*time < clip->startTime || *time >= clip->endTime))
+        if (!_HasTimeSamples(
+                clipSet, specPath, time,
+                &_extraInfo->lowerSample, &_extraInfo->upperSample)) {
             return false;
-
-        if (_HasTimeSamples(clip, specPath, time,
-                            &_extraInfo->lowerSample, 
-                            &_extraInfo->upperSample)){
-    
-            _extraInfo->clip = clip;
-            // If we're querying at a particular time, we know the value comes
-            // from this clip at this time.  If we're not given a time, then we
-            // cannot be sure, and we must say that the value source may be time
-            // dependent.
-            _resolveInfo->_source = time ?
-                UsdResolveInfoSourceValueClips :
-                UsdResolveInfoSourceIsTimeDependent;
-            _resolveInfo->_layerStack = node.GetLayerStack();
-            _resolveInfo->_primPathInLayerStack = node.GetPath();
-            _resolveInfo->_node = node;
-            return true;
         }
 
-        return false;
+        _extraInfo->clipSet = clipSet;
+
+        _resolveInfo->_source = UsdResolveInfoSourceValueClips;
+        _resolveInfo->_layerStack = node.GetLayerStack();
+        _resolveInfo->_primPathInLayerStack = node.GetPath();
+        _resolveInfo->_node = node;
+        
+        return true;
     }
 
 private:
@@ -7153,12 +7464,6 @@ private:
     UsdStage::_ExtraResolveInfo<T>* _extraInfo;
 };
 
-// NOTE:
-// When dealing with value clips, this function may return different 
-// results for the same attribute depending on whether the optional 
-// UsdTimeCode is passed in.  This may be a little surprising because the
-// resolve info is the same across all time for all other sources of
-// values (e.g., time samples, defaults).  
 template <class T>
 void
 UsdStage::_GetResolveInfo(const UsdAttribute &attr, 
@@ -7176,8 +7481,7 @@ UsdStage::_GetResolveInfo(const UsdAttribute &attr,
     
     if (TfDebug::IsEnabled(USD_VALIDATE_VARIABILITY) &&
         (resolveInfo->_source == UsdResolveInfoSourceTimeSamples ||
-         resolveInfo->_source == UsdResolveInfoSourceValueClips ||
-         resolveInfo->_source == UsdResolveInfoSourceIsTimeDependent) &&
+         resolveInfo->_source == UsdResolveInfoSourceValueClips) &&
         _GetVariability(attr) == SdfVariabilityUniform) {
 
         TF_DEBUG(USD_VALIDATE_VARIABILITY)
@@ -7191,7 +7495,7 @@ UsdStage::_GetResolveInfo(const UsdAttribute &attr,
 // in strength order. Resolvers must implement three functions: 
 //       
 //       ProcessLayer()
-//       ProcessClip()
+//       ProcessClips()
 //       ProcessFallback()
 //
 // Each of these functions is required to return true, to indicate that 
@@ -7211,7 +7515,7 @@ UsdStage::_GetResolvedValueImpl(const UsdProperty &prop,
     // Retrieve all clips that may contribute time samples for this
     // attribute at the given time. Clips never contribute default
     // values.
-    const std::vector<Usd_ClipCache::Clips>* clipsAffectingPrim = nullptr;
+    const std::vector<Usd_ClipSetRefPtr>* clipsAffectingPrim = nullptr;
     if (primHandle->MayHaveOpinionsInClips()
         && (!time || !time->IsDefault())) {
         clipsAffectingPrim =
@@ -7235,7 +7539,7 @@ UsdStage::_GetResolvedValueImpl(const UsdProperty &prop,
         const SdfPath specPath = node.GetPath().AppendProperty(prop.GetName());
         const SdfLayerRefPtrVector& layerStack 
             = node.GetLayerStack()->GetLayers();
-        boost::optional<std::vector<const Usd_ClipCache::Clips*>> clips;
+        boost::optional<std::vector<Usd_ClipSetRefPtr>> clips;
         for (size_t i = 0, e = layerStack.size(); i < e; ++i) {
             if (nodeHasSpecs) { 
                 if (resolver->ProcessLayer(i, specPath, node, 
@@ -7260,7 +7564,7 @@ UsdStage::_GetResolvedValueImpl(const UsdProperty &prop,
                 ARCH_PRAGMA_PUSH
                 ARCH_PRAGMA_MAYBE_UNINITIALIZED
 
-                for (const Usd_ClipCache::Clips* clipSet : *clips) {
+                for (const Usd_ClipSetRefPtr& clipSet : *clips) {
                     // We only care about clips that were introduced at this
                     // position within the LayerStack.
                     if (clipSet->sourceLayerIndex != i) {
@@ -7270,11 +7574,9 @@ UsdStage::_GetResolvedValueImpl(const UsdProperty &prop,
                     // Look through clips to see if they have a time sample for
                     // this attribute. If a time is given, examine just the clips
                     // that are active at that time.
-                    for (const Usd_ClipRefPtr& clip : clipSet->valueClips) {
-                        if (resolver->ProcessClip(clip, specPath, node,
-                                                  localTime.get_ptr())) {
-                            return;
-                        }
+                    if (resolver->ProcessClips(
+                            clipSet, specPath, node, localTime.get_ptr())) {
+                        return;
                     }
                 }
 
@@ -7327,43 +7629,20 @@ UsdStage::_GetValueFromResolveInfoImpl(const UsdResolveInfo &info,
             info._primPathInLayerStack.AppendProperty(attr.GetName());
 
         const UsdPrim prim = attr.GetPrim();
-        const std::vector<Usd_ClipCache::Clips>& clipsAffectingPrim =
+        const std::vector<Usd_ClipSetRefPtr>& clipsAffectingPrim =
             _clipCache->GetClipsForPrim(prim.GetPath());
 
-        for (const auto& clipAffectingPrim : clipsAffectingPrim) {
-            const Usd_ClipRefPtrVector& clips = clipAffectingPrim.valueClips;
-            for (size_t i = 0, numClips = clips.size(); i < numClips; ++i) {
-                // Note that we do not apply layer offsets to the time.
-                // Because clip metadata may be authored in different 
-                // layers in the LayerStack, each with their own 
-                // layer offsets, it is simpler to bake the effects of 
-                // those offsets into Usd_Clip.
-                const Usd_ClipRefPtr& clip = clips[i];
-                const double localTime = time.GetValue();
-                
-                if (!_ClipAppliesToLayerStackSite(
-                        clip, info._layerStack, info._primPathInLayerStack) 
-                    || localTime < clip->startTime
-                    || localTime >= clip->endTime) {
-                    continue;
-                }
-
-                double upper = 0.0;
-                double lower = 0.0;
-                if (clip->GetBracketingTimeSamplesForPath(
-                        specPath, localTime, &lower, &upper)) {
-                    return UsdStage_ResolveInfoAccess::_GetClipValue(
-                        time, attr, info, clip, lower, upper, interpolator, 
-                        result);
-                }
+        for (const auto& clipSet : clipsAffectingPrim) {
+            if (!_ClipsApplyToLayerStackSite(
+                    clipSet, info._layerStack, info._primPathInLayerStack)
+                || !_ClipsContainValueForAttribute(clipSet, specPath)) {
+                continue;
             }
+
+            return UsdStage_ResolveInfoAccess::_GetClipValue(
+                time, attr, info, clipSet, nullptr, nullptr,
+                interpolator, result);
         }
-    }
-    else if (info._source == UsdResolveInfoSourceIsTimeDependent) {
-        // In this case, we obtained a resolve info for an attribute value whose
-        // value source may vary over time.  So we must fall back on invoking
-        // the normal Get() machinery now that we actually have a specific time.
-        return _GetValueImpl(time, attr, interpolator, result);
     }
     else if (info._source == UsdResolveInfoSourceFallback) {
         // Get the fallback value.
@@ -7500,72 +7779,31 @@ UsdStage::_GetTimeSamplesInIntervalFromResolveInfo(
 
         return true;
     }
-    else if (info._source == UsdResolveInfoSourceValueClips ||
-             info._source == UsdResolveInfoSourceIsTimeDependent) {
+    else if (info._source == UsdResolveInfoSourceValueClips) {
         const UsdPrim prim = attr.GetPrim();
 
         // See comments in _GetValueImpl regarding clips.
-        const std::vector<Usd_ClipCache::Clips>& clipsAffectingPrim =
+        const std::vector<Usd_ClipSetRefPtr>& clipsAffectingPrim =
             _clipCache->GetClipsForPrim(prim.GetPath());
 
         const SdfPath specPath =
             info._primPathInLayerStack.AppendProperty(attr.GetName());
 
-        std::vector<double> timesFromAllClips;
-
         // Loop through all the clips that apply to this node and
         // combine all the time samples that are provided.
-        for (const auto& clipAffectingPrim : clipsAffectingPrim) {
-            for (const auto& clip : clipAffectingPrim.valueClips) {
-                if (!_ClipAppliesToLayerStackSite(
-                        clip, info._layerStack, info._primPathInLayerStack)) {
-                    continue;
-                }
-
-                const auto clipInterval 
-                    = GfInterval(clip->startTime, clip->endTime);
-                
-                // if we are constraining our range, and none of our range
-                // intersects with the specified clip range, we can ignore
-                // and move on to the next clip.
-                if (!interval.Intersects(clipInterval)) {
-                    continue;
-                }
-                
-                // See comments in _GetValueImpl regarding layer
-                // offsets and why they're not applied here.
-                const auto samples = clip->ListTimeSamplesForPath(specPath);
-                if (!samples.empty()) {
-                    copySamplesInInterval(samples, &timesFromAllClips, interval);
-                }
-
-                // Clips introduce time samples at their boundaries to
-                // isolate them from surrounding clips, even if time samples
-                // don't actually exist. 
-                //
-                // See _GetBracketingTimeSamplesFromResolveInfo for more
-                // details.
-                if (interval.Contains(clipInterval.GetMin())
-                    && clipInterval.GetMin() != Usd_ClipTimesEarliest) {
-                    timesFromAllClips.push_back(clip->startTime);
-                }
-
-                if (interval.Contains(clipInterval.GetMax())
-                    && clipInterval.GetMax() != Usd_ClipTimesLatest){
-                    timesFromAllClips.push_back(clip->endTime);
-                }
+        for (const auto& clipSet : clipsAffectingPrim) {
+            if (!_ClipsApplyToLayerStackSite(
+                    clipSet, info._layerStack, info._primPathInLayerStack)
+                || !_ClipsContainValueForAttribute(clipSet, specPath)) {
+                continue;
             }
 
-            if (!timesFromAllClips.empty()) {
-                std::sort(
-                    timesFromAllClips.begin(), timesFromAllClips.end());
-                timesFromAllClips.erase(
-                    std::unique(
-                        timesFromAllClips.begin(), timesFromAllClips.end()),
-                    timesFromAllClips.end());
-                times->swap(timesFromAllClips);
-                return true;
-            }
+            // See comments in _GetValueImpl regarding layer
+            // offsets and why they're not applied here.
+            const std::set<double> samples =
+                clipSet->ListTimeSamplesForPath(specPath);
+            copySamplesInInterval(samples, times, interval);;
+            return true;
         }
     }
 
@@ -7593,8 +7831,7 @@ UsdStage::_GetNumTimeSamplesFromResolveInfo(const UsdResolveInfo &info,
 
         return layer->GetNumTimeSamplesForPath(specPath);
     } 
-    else if (info._source == UsdResolveInfoSourceValueClips ||
-             info._source == UsdResolveInfoSourceIsTimeDependent) {
+    else if (info._source == UsdResolveInfoSourceValueClips) {
         // XXX: optimization
         // 
         // We don't have an efficient way of getting the number of time
@@ -7621,24 +7858,6 @@ UsdStage::_GetBracketingTimeSamples(const UsdAttribute &attr,
                                     double* upper,
                                     bool* hasSamples) const
 {
-    // If value clips might apply to this attribute, the bracketing time
-    // samples will depend on whether any of those clips contain samples
-    // or not. For instance, if none of the clips contain samples, the
-    // correct answer is *hasSamples == false.
-    //
-    // This means we have to scan all clips, not just the one at the 
-    // specified time. We do this by calling _GetResolveInfo without a 
-    // time -- see comment above that function for details. Unfortunately,
-    // this skips the optimization below, meaning we may ask layers for
-    // bracketing time samples more than once.
-    if (attr._Prim()->MayHaveOpinionsInClips()) {
-        UsdResolveInfo resolveInfo;
-        _GetResolveInfo<SdfAbstractDataValue>(attr, &resolveInfo);
-        return _GetBracketingTimeSamplesFromResolveInfo(
-            resolveInfo, attr, desiredTime, requireAuthored, lower, upper, 
-            hasSamples);
-    }
-
     const UsdTimeCode time(desiredTime);
 
     UsdResolveInfo resolveInfo;
@@ -7661,6 +7880,12 @@ UsdStage::_GetBracketingTimeSamples(const UsdAttribute &attr,
             *upper = offset * (*upper);
         }
 
+        *hasSamples = true;
+        return true;
+    }
+    else if (resolveInfo._source == UsdResolveInfoSourceValueClips) {
+        *lower = extraInfo.lowerSample;
+        *upper = extraInfo.upperSample;
         *hasSamples = true;
         return true;
     }
@@ -7703,84 +7928,27 @@ UsdStage::_GetBracketingTimeSamplesFromResolveInfo(const UsdResolveInfo &info,
         *hasSamples = false;
         return true;
     }
-    else if (info._source == UsdResolveInfoSourceValueClips ||
-             info._source == UsdResolveInfoSourceIsTimeDependent) {
+    else if (info._source == UsdResolveInfoSourceValueClips) {
         const SdfPath specPath =
             info._primPathInLayerStack.AppendProperty(attr.GetName());
 
         const UsdPrim prim = attr.GetPrim();
 
         // See comments in _GetValueImpl regarding clips.
-        const std::vector<Usd_ClipCache::Clips>& clipsAffectingPrim =
+        const std::vector<Usd_ClipSetRefPtr>& clipsAffectingPrim =
             _clipCache->GetClipsForPrim(prim.GetPath());
 
-        for (const auto& clipAffectingPrim : clipsAffectingPrim) {
-            for (const auto& clip : clipAffectingPrim.valueClips) {
-                if (!_ClipAppliesToLayerStackSite(
-                        clip, info._layerStack, info._primPathInLayerStack)
-                    || desiredTime < clip->startTime
-                    || desiredTime >= clip->endTime) {
-                    continue;
-                }
-                
-                // Clips introduce time samples at their boundaries even 
-                // if time samples don't actually exist. This isolates each
-                // clip from its neighbors and means that value resolution
-                // never has to look at more than one clip to answer a
-                // time sample query.
-                //
-                // We have to accommodate these 'fake' time samples here.
-                bool foundLower = false, foundUpper = false;
+        for (const auto& clipSet : clipsAffectingPrim) {
+            if (!_ClipsApplyToLayerStackSite(
+                    clipSet, info._layerStack, info._primPathInLayerStack)
+                || !_ClipsContainValueForAttribute(clipSet, specPath)) {
+                continue;
+            }
 
-                if (desiredTime == clip->startTime) {
-                    *lower = *upper = clip->startTime;
-                    foundLower = foundUpper = true;
-                }
-                else if (desiredTime == clip->endTime) {
-                    *lower = *upper = clip->endTime;
-                    foundLower = foundUpper = true;
-                }
-                else if (clip->GetBracketingTimeSamplesForPath(
-                         specPath, desiredTime, lower, upper)) {
-                    foundLower = foundUpper = true;
-                    if (*lower == *upper) {
-                        if (desiredTime < *lower) {
-                            foundLower = false;
-                        }
-                        else if (desiredTime > *upper) {
-                            foundUpper = false;
-                        }
-                    }
-                }
-
-                if (!foundLower && 
-                    clip->startTime != Usd_ClipTimesEarliest) {
-                    *lower = clip->startTime;
-                    foundLower = true;
-                }
-
-                if (!foundUpper && 
-                    clip->endTime != Usd_ClipTimesLatest) {
-                    *upper = clip->endTime;
-                    foundUpper = true;
-                }
-
-                if (foundLower && !foundUpper) {
-                    *upper = *lower;
-                }
-                else if (!foundLower && foundUpper) {
-                    *lower = *upper;
-                }
-                
-                // '||' is correct here. Consider the case where we only
-                // have a single clip and desiredTime is earlier than the
-                // first time sample -- foundLower will be false, but we
-                // want to return the bracketing samples from the sole
-                // clip anyway.
-                if (foundLower || foundUpper) {
-                    *hasSamples = true;
-                    return true;
-                }
+            if (clipSet->GetBracketingTimeSamplesForPath(
+                    specPath, desiredTime, lower, upper)) {
+                *hasSamples = true;
+                return true;
             }
         }
     }
@@ -7805,22 +7973,22 @@ UsdStage::_GetBracketingTimeSamplesFromResolveInfo(const UsdResolveInfo &info,
 }
 
 static bool
-_ValueFromClipsMightBeTimeVarying(const Usd_ClipRefPtr &firstClipWithSamples,
+_ValueFromClipsMightBeTimeVarying(const Usd_ClipSetRefPtr &clipSet,
                                   const SdfPath &attrSpecPath)
 {
-    // If the first clip is active over all time (i.e., it is the only 
-    // clip that affects this attribute) and it has more than one time
-    // sample, then it might be time varying. If it only has one sample,
-    // its value must be constant over all time.
-    if (firstClipWithSamples->startTime == Usd_ClipTimesEarliest
-        && firstClipWithSamples->endTime == Usd_ClipTimesLatest) {
-        return firstClipWithSamples->GetNumTimeSamplesForPath(attrSpecPath) > 1;
+    // If there is only one clip active over all time and it has more than one
+    // time sample for the attribute, it might be time varying. Otherwise the
+    // attribute's value must be constant over all time.
+    if (clipSet->valueClips.size() == 1) {
+        const size_t numTimeSamples = 
+            clipSet->valueClips.front()->GetNumTimeSamplesForPath(attrSpecPath);
+        return numTimeSamples > 1;
     }
 
-    // Since this clip isn't active over all time, we must have more clips.
-    // Because Usd doesn't hold values across clip boundaries, we can't
-    // say for certain that the value will be constant across all time.
-    // So, we have to report that the value might be time varying.
+    // Since there are multiple clips active across all time, we can't say
+    // for certain whether there are multiple time samples without 
+    // potentially opening every clip. So, we have to report that the value
+    // might be time varying.
     return true;
 }
 
@@ -7831,14 +7999,11 @@ UsdStage::_ValueMightBeTimeVarying(const UsdAttribute &attr) const
     _ExtraResolveInfo<SdfAbstractDataValue> extraInfo;
     _GetResolveInfo(attr, &info, nullptr, &extraInfo);
 
-    if (info._source == UsdResolveInfoSourceValueClips ||
-        info._source == UsdResolveInfoSourceIsTimeDependent) {
+    if (info._source == UsdResolveInfoSourceValueClips) {
         // See comment in _ValueMightBeTimeVaryingFromResolveInfo.
-        // We can short-cut the work in that function because _GetResolveInfo
-        // gives us the first clip that has time samples for this attribute.
         const SdfPath specPath = 
             info._primPathInLayerStack.AppendProperty(attr.GetName());
-        return _ValueFromClipsMightBeTimeVarying(extraInfo.clip, specPath);
+        return _ValueFromClipsMightBeTimeVarying(extraInfo.clipSet, specPath);
     }
 
     return _ValueMightBeTimeVaryingFromResolveInfo(info, attr);
@@ -7848,28 +8013,23 @@ bool
 UsdStage::_ValueMightBeTimeVaryingFromResolveInfo(const UsdResolveInfo &info,
                                                   const UsdAttribute &attr) const
 {
-    if (info._source == UsdResolveInfoSourceValueClips ||
-        info._source == UsdResolveInfoSourceIsTimeDependent) {
-        // In the case that the attribute value comes from a value clip, we
-        // need to find the first clip that has samples for attr to see if the
-        // clip values may be time varying. This is potentially much more 
-        // efficient than the _GetNumTimeSamples check below, since that 
-        // requires us to open every clip to get the time sample count.
-        //
-        // Note that we still wind up checking every clip if none of them
-        // have samples for this attribute.
+    if (info._source == UsdResolveInfoSourceValueClips) {
+        // Do a specialized check for value clips instead of falling through
+        // to calling _GetNumTimeSamplesFromResolveInfo, which requires opening
+        // every clip to get the total time sample count.
         const SdfPath specPath =
             info._primPathInLayerStack.AppendProperty(attr.GetName());
 
-        const std::vector<Usd_ClipCache::Clips>& clipsAffectingPrim =
+        const std::vector<Usd_ClipSetRefPtr>& clipsAffectingPrim =
             _clipCache->GetClipsForPrim(attr.GetPrim().GetPath());
-        for (const auto& clipAffectingPrim : clipsAffectingPrim) {
-            for (const auto& clip : clipAffectingPrim.valueClips) {
-                if (_ClipAppliesToLayerStackSite(
-                        clip, info._layerStack, info._primPathInLayerStack)
-                    && _HasTimeSamples(clip, specPath)) {
-                    return _ValueFromClipsMightBeTimeVarying(clip, specPath);
-                }
+        for (const auto& clipSet : clipsAffectingPrim) {
+            if (!_ClipsApplyToLayerStackSite(
+                    clipSet, info._layerStack, info._primPathInLayerStack)) {
+                continue;
+            }
+
+            if (_HasTimeSamples(clipSet, specPath)) {
+                return _ValueFromClipsMightBeTimeVarying(clipSet, specPath);
             }
         }
         
@@ -7877,62 +8037,6 @@ UsdStage::_ValueMightBeTimeVaryingFromResolveInfo(const UsdResolveInfo &info,
     }
 
     return _GetNumTimeSamplesFromResolveInfo(info, attr) > 1;
-}
-
-static
-bool 
-_HasLayerFieldOrDictKey(const SdfLayerHandle &layer, 
-                        const ArResolverContext &context,
-                        const TfToken &key, const TfToken &keyPath, VtValue *val)
-{
-    bool hasVal =  keyPath.IsEmpty() ?
-        layer->HasField(SdfPath::AbsoluteRootPath(), key, val) :
-        layer->HasFieldDictKey(SdfPath::AbsoluteRootPath(), key, keyPath, val);
-
-    if (hasVal && val){
-        // Resolve asset paths. Note that we don't need to resolve time 
-        // codes as this function is only used to get layer level metadata
-        // on the stage's root or session layer. There is no mapping that
-        // applies to time codes in this context.
-        _TryResolveValuesInDictionary(val, layer, context, 
-            /* layerOffsetGetter = */ nullptr, 
-            /* anchorAssetPathsOnly = */ false) ||
-        _TryResolveAssetPaths(val, context, layer,
-                              /* anchorAssetPathsOnly = */ false);
-    }
-
-    return hasVal;
-}
-
-static
-bool
-_HasStageMetadataOrDictKey(const UsdStage &stage, 
-                           const TfToken &key, const TfToken &keyPath,
-                           VtValue *value)
-{
-    SdfLayerHandle sessionLayer = stage.GetSessionLayer();
-    const ArResolverContext &context = stage.GetPathResolverContext();
-    
-    if (sessionLayer && 
-        _HasLayerFieldOrDictKey(sessionLayer, context, key, keyPath, value)){
-        VtValue rootValue;
-        if (value && 
-            value->IsHolding<VtDictionary>() &&
-            _HasLayerFieldOrDictKey(stage.GetRootLayer(), context, key, keyPath, 
-                                    &rootValue) && 
-            rootValue.IsHolding<VtDictionary>() ){
-            const VtDictionary &rootDict = rootValue.UncheckedGet<VtDictionary>();
-            VtDictionary dict;
-            value->UncheckedSwap<VtDictionary>(dict);
-            VtDictionaryOverRecursive(&dict, rootDict);
-            value->UncheckedSwap<VtDictionary>(dict);
-        }
-
-        return true;
-    }
-     
-    return _HasLayerFieldOrDictKey(stage.GetRootLayer(), context, 
-                                   key, keyPath, value);
 }
 
 bool
@@ -7951,10 +8055,9 @@ UsdStage::GetMetadata(const TfToken &key, VtValue *value) const
         return false;
     }
     
-    if (!_HasStageMetadataOrDictKey(*this, key, TfToken(), value)){
+    if (!GetPseudoRoot().GetMetadata(key, value)) {
         *value = SdfSchema::GetInstance().GetFallback(key);
-    } 
-    else if (value->IsHolding<VtDictionary>()){
+    } else if (value->IsHolding<VtDictionary>()){
         const VtDictionary &fallback = SdfSchema::GetInstance().GetFallback(key).Get<VtDictionary>();
         
         VtDictionary dict;
@@ -7973,7 +8076,7 @@ UsdStage::HasMetadata(const TfToken &key) const
     if (!schema.IsValidFieldForSpec(key, SdfSpecTypePseudoRoot))
         return false;
 
-    return (HasAuthoredMetadata(key) ||
+    return (GetPseudoRoot().HasAuthoredMetadata(key) ||
             !schema.GetFallback(key).IsEmpty());
 }
 
@@ -7985,7 +8088,7 @@ UsdStage::HasAuthoredMetadata(const TfToken& key) const
     if (!schema.IsValidFieldForSpec(key, SdfSpecTypePseudoRoot))
         return false;
 
-    return _HasStageMetadataOrDictKey(*this, key, TfToken(), nullptr);
+    return GetPseudoRoot().HasAuthoredMetadata(key);
 }
 
 static
@@ -8113,7 +8216,7 @@ UsdStage::GetMetadataByDictKey(const TfToken& key, const TfToken &keyPath,
     if (!schema.IsValidFieldForSpec(key, SdfSpecTypePseudoRoot))
         return false;
 
-    if (!_HasStageMetadataOrDictKey(*this, key, keyPath, value)){
+    if (!GetPseudoRoot().GetMetadataByDictKey(key, keyPath, value)) {
         const VtValue &fallback =  SdfSchema::GetInstance().GetFallback(key);
         if (!fallback.IsEmpty()){
             const VtValue *elt = fallback.Get<VtDictionary>().
@@ -8148,8 +8251,9 @@ UsdStage::HasMetadataDictKey(const TfToken& key, const TfToken &keyPath) const
         !schema.IsValidFieldForSpec(key, SdfSpecTypePseudoRoot))
         return false;
 
-    if (HasAuthoredMetadataDictKey(key, keyPath))
+    if (GetPseudoRoot().HasAuthoredMetadataDictKey(key, keyPath)) {
         return true;
+    }
 
     const VtValue &fallback =  schema.GetFallback(key);
     
@@ -8164,7 +8268,7 @@ UsdStage::HasAuthoredMetadataDictKey(
     if (keyPath.IsEmpty())
         return false;
 
-    return _HasStageMetadataOrDictKey(*this, key, keyPath, nullptr);
+    return GetPseudoRoot().HasAuthoredMetadataDictKey(key, keyPath);
 }
 
 bool
@@ -8296,17 +8400,12 @@ UsdStage::HasAuthoredTimeCodeRange() const
 double 
 UsdStage::GetTimeCodesPerSecond() const
 {
-    // Imitate what SdfLayer does: prefer TCPS, but if it isn't set, fall back
-    // dynamically to FPS.  Adapt that rule to include the session layer.  In
-    // order of priority, use: session TCPS, root layer TCPS, session FPS, root
-    // layer FPS.
-    if (HasAuthoredMetadata(SdfFieldKeys->TimeCodesPerSecond)) {
-        double result = 0;
-        GetMetadata(SdfFieldKeys->TimeCodesPerSecond, &result);
-        return result;
-    }
-
-    return GetFramesPerSecond();
+    // PcpLayerStack computes timeCodesPerSecond for its map function layer 
+    // offsets. The root layer stack will always have the stage's fully
+    // computed timeCodesPerSecond value accounting for the unique interaction
+    // between the root and session layer.
+    const PcpLayerStackPtr localLayerStack = _GetPcpCache()->GetLayerStack();
+    return localLayerStack->GetTimeCodesPerSecond();
 }
 
 void 

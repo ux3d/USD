@@ -33,6 +33,7 @@ import datetime
 import distutils
 import fnmatch
 import glob
+import locale
 import multiprocessing
 import os
 import platform
@@ -90,12 +91,15 @@ def MacOS():
 def Python3():
     return sys.version_info.major == 3
 
+def GetLocale():
+    return sys.stdout.encoding or locale.getdefaultlocale()[1] or "UTF-8"
+
 def GetCommandOutput(command):
     """Executes the specified command and returns output or None."""
     try:
         return subprocess.check_output(
             shlex.split(command), 
-            stderr=subprocess.STDOUT).decode('utf-8').strip()
+            stderr=subprocess.STDOUT).decode(GetLocale(), 'replace').strip()
     except subprocess.CalledProcessError:
         pass
     return None
@@ -126,27 +130,27 @@ def GetVisualStudioCompilerAndVersion():
             return (msvcCompiler, tuple(int(v) for v in match.groups()))
     return None
 
-def IsVisualStudio2019OrGreater():
+def IsVisualStudioVersionOrGreater(desiredVersion):
     if not Windows():
         return False
 
-    VISUAL_STUDIO_2019_VERSION = (16, 0)
     msvcCompilerAndVersion = GetVisualStudioCompilerAndVersion()
     if msvcCompilerAndVersion:
         _, version = msvcCompilerAndVersion
-        return version >= VISUAL_STUDIO_2019_VERSION
+        return version >= desiredVersion
     return False
+
+def IsVisualStudio2019OrGreater():
+    VISUAL_STUDIO_2019_VERSION = (16, 0)
+    return IsVisualStudioVersionOrGreater(VISUAL_STUDIO_2019_VERSION)
 
 def IsVisualStudio2017OrGreater():
-    if not Windows():
-        return False
-
     VISUAL_STUDIO_2017_VERSION = (15, 0)
-    msvcCompilerAndVersion = GetVisualStudioCompilerAndVersion()
-    if msvcCompilerAndVersion:
-        _, version = msvcCompilerAndVersion
-        return version >= VISUAL_STUDIO_2017_VERSION
-    return False
+    return IsVisualStudioVersionOrGreater(VISUAL_STUDIO_2017_VERSION)
+
+def IsVisualStudio2015OrGreater():
+    VISUAL_STUDIO_2015_VERSION = (14, 0)
+    return IsVisualStudioVersionOrGreater(VISUAL_STUDIO_2015_VERSION)
 
 def IsMayaPython():
     """Determine whether we're running in Maya's version of Python. When 
@@ -252,9 +256,8 @@ def Run(cmd, logCommandOutput = True):
         if logCommandOutput:
             p = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE, 
                                  stderr=subprocess.STDOUT)
-            encoding = sys.stdout.encoding or "UTF-8"
             while True:
-                l = p.stdout.readline().decode(encoding)
+                l = p.stdout.readline().decode(GetLocale(), 'replace')
                 if l:
                     logfile.write(l)
                     PrintCommandOutput(l)
@@ -347,7 +350,11 @@ def RunCMake(context, force, extraArgs = None):
 
     if IsVisualStudio2019OrGreater():
         generator = generator + " -A x64"
-                
+
+    toolset = context.cmakeToolset
+    if toolset is not None:
+        toolset = '-T "{toolset}"'.format(toolset=toolset)
+
     # On MacOS, enable the use of @rpath for relocatable builds.
     osx_rpath = None
     if MacOS():
@@ -366,6 +373,7 @@ def RunCMake(context, force, extraArgs = None):
             '-DCMAKE_BUILD_TYPE={config} '
             '{osx_rpath} '
             '{generator} '
+            '{toolset} '
             '{extraArgs} '
             '"{srcDir}"'
             .format(instDir=instDir,
@@ -374,6 +382,7 @@ def RunCMake(context, force, extraArgs = None):
                     srcDir=srcDir,
                     osx_rpath=(osx_rpath or ""),
                     generator=(generator or ""),
+                    toolset=(toolset or ""),
                     extraArgs=(" ".join(extraArgs) if extraArgs else "")))
         Run("cmake --build . --config {config} --target install -- {multiproc}"
             .format(config=config,
@@ -614,7 +623,10 @@ ZLIB = Dependency("zlib", InstallZlib, "include/zlib.h")
 ############################################################
 # boost
 
-if Linux() or MacOS():
+if MacOS():
+    BOOST_URL = "https://downloads.sourceforge.net/project/boost/boost/1.70.0/boost_1_70_0.tar.gz"
+    BOOST_VERSION_FILE = "include/boost/version.hpp"
+elif Linux():
     if Python3():
         BOOST_URL = "https://downloads.sourceforge.net/project/boost/boost/1.70.0/boost_1_70_0.tar.gz"
     else:
@@ -631,7 +643,7 @@ elif Windows():
     BOOST_URL = "https://downloads.sourceforge.net/project/boost/boost/1.70.0/boost_1_70_0.tar.gz"
     BOOST_VERSION_FILE = "include/boost-1_70/boost/version.hpp"
 
-def InstallBoost(context, force, buildArgs):
+def InstallBoost_Helper(context, force, buildArgs):
     # Documentation files in the boost archive can have exceptionally
     # long paths. This can lead to errors when extracting boost on Windows,
     # since paths are limited to 260 characters by default on that platform.
@@ -723,7 +735,13 @@ def InstallBoost(context, force, buildArgs):
         if Windows():
             # toolset parameter for Visual Studio documented here:
             # https://github.com/boostorg/build/blob/develop/src/tools/msvc.jam
-            if IsVisualStudio2019OrGreater():
+            if context.cmakeToolset == "v142":
+                b2_settings.append("toolset=msvc-14.2")
+            elif context.cmakeToolset == "v141":
+                b2_settings.append("toolset=msvc-14.1")
+            elif context.cmakeToolset == "v140":
+                b2_settings.append("toolset=msvc-14.0")
+            elif IsVisualStudio2019OrGreater():
                 b2_settings.append("toolset=msvc-14.2")
             elif IsVisualStudio2017OrGreater():
                 b2_settings.append("toolset=msvc-14.1")
@@ -741,6 +759,20 @@ def InstallBoost(context, force, buildArgs):
         b2 = "b2" if Windows() else "./b2"
         Run('{b2} {options} install'
             .format(b2=b2, options=" ".join(b2_settings)))
+
+def InstallBoost(context, force, buildArgs):
+    # Boost's build system will install the version.hpp header before
+    # building its libraries. We make sure to remove it in case of
+    # any failure to ensure that the build script detects boost as a 
+    # dependency to build the next time it's run.
+    try:
+        InstallBoost_Helper(context, force, buildArgs)
+    except:
+        versionHeader = os.path.join(context.instDir, BOOST_VERSION_FILE)
+        if os.path.isfile(versionHeader):
+            try: os.remove(versionHeader)
+            except: pass
+        raise
 
 BOOST = Dependency("boost", InstallBoost, BOOST_VERSION_FILE)
 
@@ -846,7 +878,17 @@ def InstallTIFF(context, force, buildArgs):
         PatchFile("CMakeLists.txt", 
                    [("add_subdirectory(tools)", "# add_subdirectory(tools)"),
                     ("add_subdirectory(test)", "# add_subdirectory(test)")])
-        RunCMake(context, force, buildArgs)
+
+        # The libTIFF CMakeScript says the ld-version-script 
+        # functionality is only for compilers using GNU ld on 
+        # ELF systems or systems which provide an emulation; therefore
+        # skipping it completely on mac and windows.
+        if MacOS() or Windows():
+            extraArgs = ["-Dld-version-script=OFF"]
+        else:
+            extraArgs = []
+        extraArgs += buildArgs
+        RunCMake(context, force, extraArgs)
 
 TIFF = Dependency("TIFF", InstallTIFF, "include/tiff.h")
 
@@ -910,42 +952,6 @@ def InstallOpenEXR(context, force, buildArgs):
 OPENEXR = Dependency("OpenEXR", InstallOpenEXR, "include/OpenEXR/ImfVersion.h")
 
 ############################################################
-# GLEW
-
-if Windows():
-    GLEW_URL = "https://downloads.sourceforge.net/project/glew/glew/2.0.0/glew-2.0.0-win32.zip"
-else:
-    # Important to get source package from this URL and NOT github. This package
-    # contains pre-generated code that the github repo does not.
-    GLEW_URL = "https://downloads.sourceforge.net/project/glew/glew/2.0.0/glew-2.0.0.tgz"
-
-def InstallGLEW(context, force, buildArgs):
-    if Windows():
-        InstallGLEW_Windows(context, force)
-    elif Linux() or MacOS():
-        InstallGLEW_LinuxOrMacOS(context, force, buildArgs)
-
-def InstallGLEW_Windows(context, force):
-    with CurrentWorkingDirectory(DownloadURL(GLEW_URL, context, force)):
-        # On Windows, we install headers and pre-built binaries per
-        # https://glew.sourceforge.net/install.html
-        # Note that we are installing just the shared library. This is required
-        # by the USD build; if the static library is present, that one will be
-        # used and that causes errors with USD and OpenSubdiv.
-        CopyFiles(context, "bin\\Release\\x64\\glew32.dll", "bin")
-        CopyFiles(context, "lib\\Release\\x64\\glew32.lib", "lib")
-        CopyDirectory(context, "include\\GL", "include\\GL")
-
-def InstallGLEW_LinuxOrMacOS(context, force, buildArgs):
-    with CurrentWorkingDirectory(DownloadURL(GLEW_URL, context, force)):
-        Run('make GLEW_DEST="{instDir}" -j{procs} {buildArgs} install'
-            .format(instDir=context.instDir,
-                    procs=context.numJobs,
-                    buildArgs=" ".join(buildArgs)))
-
-GLEW = Dependency("GLEW", InstallGLEW, "include/GL/glew.h")
-
-############################################################
 # Ptex
 
 PTEX_URL = "https://github.com/wdas/ptex/archive/v2.1.28.zip"
@@ -973,6 +979,14 @@ def InstallPtex_Windows(context, force, buildArgs):
         PatchFile('src\\tests\\CMakeLists.txt',
                   [("add_definitions(-DPTEX_STATIC)", 
                     "# add_definitions(-DPTEX_STATIC)")])
+
+        # Patch Ptex::String to export symbol for operator<< 
+        # This is required for newer versions of OIIO, which make use of the
+        # this operator on Windows platform specifically.
+        PatchFile('src\\ptex\\Ptexture.h',
+                  [("std::ostream& operator << (std::ostream& stream, const Ptex::String& str);",
+                    "PTEXAPI std::ostream& operator << (std::ostream& stream, const Ptex::String& str);")])
+
 
         RunCMake(context, force, buildArgs)
 
@@ -1026,7 +1040,10 @@ def InstallOpenVDB(context, force, buildArgs):
         # OpenVDB needs Half type from IlmBase
         extraArgs.append('-DILMBASE_ROOT="{instDir}"'
                          .format(instDir=context.instDir))
-        
+
+        # Add on any user-specified extra arguments.
+        extraArgs += buildArgs
+
         RunCMake(context, force, extraArgs)
 
 OPENVDB = Dependency("OpenVDB", InstallOpenVDB, "include/openvdb/openvdb.h")
@@ -1034,7 +1051,7 @@ OPENVDB = Dependency("OpenVDB", InstallOpenVDB, "include/openvdb/openvdb.h")
 ############################################################
 # OpenImageIO
 
-OIIO_URL = "https://github.com/OpenImageIO/oiio/archive/Release-1.8.9.zip"
+OIIO_URL = "https://github.com/OpenImageIO/oiio/archive/Release-2.1.16.0.zip"
 
 def InstallOpenImageIO(context, force, buildArgs):
     with CurrentWorkingDirectory(DownloadURL(OIIO_URL, context, force)):
@@ -1270,18 +1287,56 @@ def InstallDraco(context, force, buildArgs):
         cmakeOptions += buildArgs
         RunCMake(context, force, cmakeOptions)
 
-DRACO = Dependency("Draco", InstallDraco, "include/Draco/src/draco/compression/decode.h")
+DRACO = Dependency("Draco", InstallDraco, "include/draco/compression/decode.h")
 
 ############################################################
 # MaterialX
 
-MATERIALX_URL = "https://github.com/materialx/MaterialX/archive/v1.36.0.zip"
+MATERIALX_URL = "https://github.com/materialx/MaterialX/archive/v1.37.3.zip"
 
 def InstallMaterialX(context, force, buildArgs):
     with CurrentWorkingDirectory(DownloadURL(MATERIALX_URL, context, force)):
-        RunCMake(context, force, buildArgs)
+        # USD requires MaterialX to be built as a shared library on Linux
+        # Currently MaterialX does not support shared builds on Windows or MacOS
+        cmakeOptions = []
+        if Linux():
+            cmakeOptions += ['-DMATERIALX_BUILD_SHARED_LIBS=ON']
+
+        cmakeOptions += buildArgs;
+
+        RunCMake(context, force, cmakeOptions)
 
 MATERIALX = Dependency("MaterialX", InstallMaterialX, "include/MaterialXCore/Library.h")
+
+############################################################
+# Embree
+# For MacOS we use version 3.7.0 to include a fix from Intel
+# to build on Catalina.
+if MacOS():
+    EMBREE_URL = "https://github.com/embree/embree/archive/v3.7.0.tar.gz"
+else:
+    EMBREE_URL = "https://github.com/embree/embree/archive/v3.2.2.tar.gz"
+
+def InstallEmbree(context, force, buildArgs):
+    with CurrentWorkingDirectory(DownloadURL(EMBREE_URL, context, force)):
+        extraArgs = [
+            '-DTBB_ROOT={instDir}'.format(instDir=context.instDir),
+            '-DEMBREE_TUTORIALS=OFF',
+            '-DEMBREE_ISPC_SUPPORT=OFF'
+        ]
+
+        # By default Embree fails to build on Visual Studio 2015 due
+        # to an internal compiler issue that is worked around via the
+        # following flag. For more details see:
+        # https://github.com/embree/embree/issues/157
+        if IsVisualStudio2015OrGreater() and not IsVisualStudio2017OrGreater():
+            extraArgs.append('-DCMAKE_CXX_FLAGS=/d2SSAOptimizer-')
+
+        extraArgs += buildArgs
+
+        RunCMake(context, force, extraArgs)
+
+EMBREE = Dependency("Embree", InstallEmbree, "include/embree3/rtcore.h")                  
 
 ############################################################
 # USD
@@ -1289,6 +1344,9 @@ MATERIALX = Dependency("MaterialX", InstallMaterialX, "include/MaterialXCore/Lib
 def InstallUSD(context, force, buildArgs):
     with CurrentWorkingDirectory(context.usdSrcDir):
         extraArgs = []
+
+        extraArgs.append('-DPXR_PREFER_SAFETY_OVER_SPEED=' + 
+                         'ON' if context.safetyFirst else 'OFF')
 
         if context.buildPython:
             extraArgs.append('-DPXR_ENABLE_PYTHON_SUPPORT=ON')
@@ -1345,6 +1403,11 @@ def InstallUSD(context, force, buildArgs):
             extraArgs.append('-DPXR_BUILD_TUTORIALS=ON')
         else:
             extraArgs.append('-DPXR_BUILD_TUTORIALS=OFF')
+
+        if context.buildTools:
+            extraArgs.append('-DPXR_BUILD_USD_TOOLS=ON')
+        else:
+            extraArgs.append('-DPXR_BUILD_USD_TOOLS=OFF')
             
         if context.buildImaging:
             extraArgs.append('-DPXR_BUILD_IMAGING=ON')
@@ -1359,9 +1422,6 @@ def InstallUSD(context, force, buildArgs):
                 extraArgs.append('-DPXR_ENABLE_OPENVDB_SUPPORT=OFF')
 
             if context.buildEmbree:
-                if context.embreeLocation:
-                    extraArgs.append('-DEMBREE_LOCATION="{location}"'
-                                     .format(location=context.embreeLocation))
                 extraArgs.append('-DPXR_BUILD_EMBREE_PLUGIN=ON')
             else:
                 extraArgs.append('-DPXR_BUILD_EMBREE_PLUGIN=OFF')
@@ -1526,6 +1586,9 @@ group.add_argument("--force-all", action="store_true",
 group.add_argument("--generator", type=str,
                    help=("CMake generator to use when building libraries with "
                          "cmake"))
+group.add_argument("--toolset", type=str,
+                   help=("CMake toolset to use when building libraries with "
+                         "cmake"))
 
 group = parser.add_argument_group(title="3rd Party Dependency Build Options")
 group.add_argument("--src", type=str,
@@ -1566,6 +1629,11 @@ subgroup.add_argument("--tutorials", dest="build_tutorials", action="store_true"
 subgroup.add_argument("--no-tutorials", dest="build_tutorials", action="store_false",
                       help="Do not build tutorials")
 subgroup = group.add_mutually_exclusive_group()
+subgroup.add_argument("--tools", dest="build_tools", action="store_true",
+                     default=True, help="Build USD tools (default)")
+subgroup.add_argument("--no-tools", dest="build_tools", action="store_false",
+                      help="Do not build USD tools")
+subgroup = group.add_mutually_exclusive_group()
 subgroup.add_argument("--docs", dest="build_docs", action="store_true",
                       default=False, help="Build documentation")
 subgroup.add_argument("--no-docs", dest="build_docs", action="store_false",
@@ -1576,6 +1644,16 @@ subgroup.add_argument("--python", dest="build_python", action="store_true",
                                          "(default)")
 subgroup.add_argument("--no-python", dest="build_python", action="store_false",
                       help="Do not build python based components")
+subgroup = group.add_mutually_exclusive_group()
+subgroup.add_argument("--prefer-safety-over-speed", dest="safety_first",
+                      action="store_true", default=True, help=
+                      "Enable extra safety checks (which may negatively "
+                      "impact performance) against malformed input files "
+                      "(default)")
+subgroup.add_argument("--prefer-speed-over-safety", dest="safety_first",
+                      action="store_false", help=
+                      "Disable performance-impacting safety checks against "
+                      "malformed input files")
 
 (NO_IMAGING, IMAGING, USD_IMAGING) = (0, 1, 2)
 
@@ -1619,8 +1697,6 @@ subgroup.add_argument("--embree", dest="build_embree", action="store_true",
                       help="Build Embree sample imaging plugin")
 subgroup.add_argument("--no-embree", dest="build_embree", action="store_false",
                       help="Do not build Embree sample imaging plugin (default)")
-group.add_argument("--embree-location", type=str,
-                   help="Directory where Embree is installed.")
 subgroup = group.add_mutually_exclusive_group()
 subgroup.add_argument("--prman", dest="build_prman", action="store_true",
                       default=False,
@@ -1711,8 +1787,9 @@ class InstallContext:
             self.downloader = DownloadFileWithUrllib
             self.downloaderName = "built-in"
 
-        # CMake generator
+        # CMake generator and toolset
         self.cmakeGenerator = args.generator
+        self.cmakeToolset = args.toolset
 
         # Number of jobs
         self.numJobs = args.jobs
@@ -1737,6 +1814,9 @@ class InstallContext:
         self.buildShared = (args.build_type == SHARED_LIBS)
         self.buildMonolithic = (args.build_type == MONOLITHIC_LIB)
 
+        # Build options
+        self.safetyFirst = args.safety_first
+
         # Dependencies that are forced to be built
         self.forceBuildAll = args.force_all
         self.forceBuild = [dep.lower() for dep in args.force_build]
@@ -1747,6 +1827,7 @@ class InstallContext:
         self.buildPython = args.build_python
         self.buildExamples = args.build_examples
         self.buildTutorials = args.build_tutorials
+        self.buildTools = args.build_tools
 
         # - Imaging
         self.buildImaging = (args.build_imaging == IMAGING or
@@ -1764,8 +1845,6 @@ class InstallContext:
 
         # - Imaging plugins
         self.buildEmbree = self.buildImaging and args.build_embree
-        self.embreeLocation = (os.path.abspath(args.embree_location)
-                               if args.embree_location else None)
         self.buildPrman = self.buildImaging and args.build_prman
         self.prmanLocation = (os.path.abspath(args.prman_location)
                                if args.prman_location else None)                               
@@ -1837,7 +1916,7 @@ if context.buildImaging:
     if context.enablePtex:
         requiredDependencies += [PTEX]
 
-    requiredDependencies += [GLEW, OPENSUBDIV]
+    requiredDependencies += [OPENSUBDIV]
 
     if context.enableOpenVDB:
         requiredDependencies += [BLOSC, BOOST, OPENEXR, OPENVDB, TBB]
@@ -1847,6 +1926,9 @@ if context.buildImaging:
 
     if context.buildOCIO:
         requiredDependencies += [OPENCOLORIO]
+
+    if context.buildEmbree:
+        requiredDependencies += [TBB, EMBREE]
                              
 if context.buildUsdview:
     requiredDependencies += [PYOPENGL, PYSIDE]
@@ -1900,8 +1982,7 @@ if (not find_executable("g++") and
     PrintError("C++ compiler not found -- please install a compiler")
     sys.exit(1)
 
-pythonExecutable = find_executable("python")
-if pythonExecutable:
+if find_executable("python"):
     # Error out if a 64bit version of python interpreter is not found
     # Note: Ideally we should be checking the python binary found above, but
     # there is an assumption (for very valid reasons) at other places in the
@@ -1911,6 +1992,16 @@ if pythonExecutable:
         PrintError("64bit python not found -- please install it and adjust your"
                    "PATH")
         sys.exit(1)
+
+    # Error out on Windows with Python 3.8+. USD currently does not support
+    # these versions due to:
+    # https://docs.python.org/3.8/whatsnew/3.8.html#bpo-36085-whatsnew
+    isPython38 = (sys.version_info.major >= 3 and
+                  sys.version_info.minor >= 8)
+    if Windows() and isPython38:
+        PrintError("Python 3.8+ is not supported on Windows")
+        sys.exit(1)
+
 else:
     PrintError("python not found -- please ensure python is included in your "
                "PATH")
@@ -1918,7 +2009,12 @@ else:
 
 if find_executable("cmake"):
     # Check cmake requirements
-    cmake_required_version = (3, 12)
+    if Windows():
+        # Windows build depend on boost 1.70, which is not supported before
+        # cmake version 3.14
+        cmake_required_version = (3, 14)
+    else:
+        cmake_required_version = (3, 12)
     cmake_version = GetCMakeVersion()
     if not cmake_version:
         PrintError("Failed to determine CMake version")
@@ -1983,6 +2079,7 @@ Building with settings:
   3rd-party install directory   {instDir}
   Build directory               {buildDir}
   CMake generator               {cmakeGenerator}
+  CMake toolset                 {cmakeToolset}
   Downloader                    {downloader}
 
   Building                      {buildType}
@@ -2001,6 +2098,7 @@ Building with settings:
     Tests                       {buildTests}
     Examples                    {buildExamples}
     Tutorials                   {buildTutorials}
+    Tools                       {buildTools}
     Alembic Plugin              {buildAlembic}
       HDF5 support:             {enableHDF5}
     Draco Plugin                {buildDraco}
@@ -2030,6 +2128,8 @@ summaryMsg = summaryMsg.format(
     instDir=context.instDir,
     cmakeGenerator=("Default" if not context.cmakeGenerator
                     else context.cmakeGenerator),
+    cmakeToolset=("Default" if not context.cmakeToolset
+                  else context.cmakeToolset),
     downloader=(context.downloaderName),
     dependencies=("None" if not dependenciesToBuild else 
                   ", ".join([d.name for d in dependenciesToBuild])),
@@ -2052,6 +2152,7 @@ summaryMsg = summaryMsg.format(
     buildTests=("On" if context.buildTests else "Off"),
     buildExamples=("On" if context.buildExamples else "Off"),
     buildTutorials=("On" if context.buildTutorials else "Off"),
+    buildTools=("On" if context.buildTools else "Off"),
     buildAlembic=("On" if context.buildAlembic else "Off"),
     buildDraco=("On" if context.buildDraco else "Off"),
     buildMaterialX=("On" if context.buildMaterialX else "Off"),

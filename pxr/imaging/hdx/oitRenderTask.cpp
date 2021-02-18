@@ -21,7 +21,7 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include "pxr/imaging/glf/glew.h"
+#include "pxr/imaging/garch/glApi.h"
 
 #include "pxr/imaging/hdx/package.h"
 #include "pxr/imaging/hdx/oitRenderTask.h"
@@ -45,10 +45,10 @@ PXR_NAMESPACE_OPEN_SCOPE
 HdxOitRenderTask::HdxOitRenderTask(HdSceneDelegate* delegate, SdfPath const& id)
     : HdxRenderTask(delegate, id)
     , _oitTranslucentRenderPassShader(
-        boost::make_shared<HdStRenderPassShader>(
+        std::make_shared<HdStRenderPassShader>(
             HdxPackageRenderPassOitShader()))
     , _oitOpaqueRenderPassShader(
-        boost::make_shared<HdStRenderPassShader>(
+        std::make_shared<HdStRenderPassShader>(
             HdxPackageRenderPassOitOpaqueShader()))
     , _isOitEnabled(HdxOitBufferAccessor::IsOitEnabled())
 {
@@ -59,7 +59,7 @@ HdxOitRenderTask::~HdxOitRenderTask()
 }
 
 void
-HdxOitRenderTask::Sync(
+HdxOitRenderTask::_Sync(
     HdSceneDelegate* delegate,
     HdTaskContext* ctx,
     HdDirtyBits* dirtyBits)
@@ -68,7 +68,7 @@ HdxOitRenderTask::Sync(
     HF_MALLOC_TAG_FUNCTION();
 
     if (_isOitEnabled) {
-        HdxRenderTask::Sync(delegate, ctx, dirtyBits);
+        HdxRenderTask::_Sync(delegate, ctx, dirtyBits);
     }
 }
 
@@ -105,6 +105,7 @@ HdxOitRenderTask::Execute(HdTaskContext* ctx)
 
     HdxOitBufferAccessor oitBufferAccessor(ctx);
 
+    oitBufferAccessor.RequestOitBuffers();
     oitBufferAccessor.InitializeOitBuffersIfNecessary();
 
     HdRenderPassStateSharedPtr renderPassState = _GetRenderPassState(ctx);
@@ -153,6 +154,10 @@ HdxOitRenderTask::Execute(HdTaskContext* ctx)
     extendedState->SetRenderPassShader(_oitOpaqueRenderPassShader);
     renderPassState->SetEnableDepthMask(true);
     renderPassState->SetColorMask(HdRenderPassState::ColorMaskRGBA);
+
+    // We resolve the AOVs just before rendering any OIT geometry, so
+    // avoid using the multisampled AOVs.
+    renderPassState->SetUseAovMultiSample(false);
     HdxRenderTask::Execute(ctx);
 
     //

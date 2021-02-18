@@ -9,22 +9,29 @@ pxr_library(hgi
 
     PUBLIC_CLASSES
         attachmentDesc
-        blitEncoder
+        blitCmds
         buffer
-        graphicsEncoder
-        graphicsEncoderDesc
+        cmds
+        computeCmds
+        computePipeline
+        graphicsCmds
+        graphicsCmdsDesc
+        graphicsPipeline
         hgi
-        pipeline
         resourceBindings
+        sampler
         shaderFunction
+        shaderFunctionDesc
+        shaderGenerator
         shaderProgram
+        shaderSection
         texture
         tokens
         types
 
     PUBLIC_HEADERS
         api.h
-        blitEncoderOps.h
+        blitCmdsOps.h
         enums.h
         handle.h
 )

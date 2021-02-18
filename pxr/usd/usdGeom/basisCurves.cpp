@@ -75,7 +75,12 @@ UsdGeomBasisCurves::Define(
 }
 
 /* virtual */
-UsdSchemaType UsdGeomBasisCurves::_GetSchemaType() const {
+UsdSchemaKind UsdGeomBasisCurves::_GetSchemaKind() const {
+    return UsdGeomBasisCurves::schemaKind;
+}
+
+/* virtual */
+UsdSchemaKind UsdGeomBasisCurves::_GetSchemaType() const {
     return UsdGeomBasisCurves::schemaType;
 }
 
@@ -202,20 +207,13 @@ static
 size_t
 _GetVStepForBasis(const TfToken &basis)
 {
-    // http://renderman.pixar.com/resources/current/rps/geometricPrimitives.html#ribasis
-    // BasisCurves do not yet support hermite or power bases.
     if (basis == UsdGeomTokens->bezier) {
         return 3;
     } else if (basis == UsdGeomTokens->bspline) {
         return 1;
     } else if (basis == UsdGeomTokens->catmullRom) {
         return 1;
-    } else if (basis == UsdGeomTokens->hermite) {
-        return 2;
-    } else if (basis == UsdGeomTokens->power) {
-        return 4;
     }
-
     // Calling code should have already errored from unknown basis.
     return 0;
 }

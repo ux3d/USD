@@ -27,65 +27,79 @@
 #include "pxr/pxr.h"
 #include "pxr/imaging/hdx/api.h"
 #include "pxr/imaging/hdx/version.h"
-#include "pxr/imaging/hdx/drawTargetRenderPass.h"
 
 #include "pxr/imaging/hd/task.h"
 
-#include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec4f.h"
+#include "pxr/base/tf/declarePtrs.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
 class HdStDrawTarget;
-
-
-typedef std::unique_ptr<HdxDrawTargetRenderPass> 
-    HdxDrawTargetRenderPassUniquePtr;
-typedef boost::shared_ptr<class HdStSimpleLightingShader> 
-    HdStSimpleLightingShaderSharedPtr;
+class HdStDrawTargetRenderPassState;
+using HdStRenderPassStateSharedPtr
+    = std::shared_ptr<class HdStRenderPassState>;
+using HdStSimpleLightingShaderSharedPtr
+    = std::shared_ptr<class HdStSimpleLightingShader>;
+TF_DECLARE_REF_PTRS(GlfSimpleLightingContext);
 
 // Not strictly necessary here.
 // But without it, would require users of the class to include it anyway
 
-class HdxDrawTargetTask  : public HdTask {
+class HdxDrawTargetTask  : public HdTask
+{
 public:
     HDX_API
     HdxDrawTargetTask(HdSceneDelegate* delegate, SdfPath const& id);
 
     HDX_API
-    virtual ~HdxDrawTargetTask();
+    ~HdxDrawTargetTask() override;
 
     /// Sync the render pass resources
     HDX_API
-    virtual void Sync(HdSceneDelegate* delegate,
-                      HdTaskContext* ctx,
-                      HdDirtyBits* dirtyBits) override;
+    void Sync(HdSceneDelegate* delegate,
+              HdTaskContext* ctx,
+              HdDirtyBits* dirtyBits) override;
 
     /// Prepare the tasks resources
     HDX_API
-    virtual void Prepare(HdTaskContext* ctx,
-                         HdRenderIndex* renderIndex) override;
-
+    void Prepare(HdTaskContext* ctx,
+                 HdRenderIndex* renderIndex) override;
+    
     /// Execute render pass task
     HDX_API
-    virtual void Execute(HdTaskContext* ctx) override;
+    void Execute(HdTaskContext* ctx) override;
 
     /// Collect Render Tags used by the task.
     HDX_API
-    virtual const TfTokenVector &GetRenderTags() const override;
+    const TfTokenVector &GetRenderTags() const override;
 
 private:
-    struct RenderPassInfo {
-        HdStRenderPassStateSharedPtr renderPassState;
-        HdStSimpleLightingShaderSharedPtr simpleLightingShader;
-        const HdStDrawTarget *target;
-        unsigned int version;
-    };
-    unsigned _currentDrawTargetSetVersion;
+    struct _RenderPassInfo;
+    struct _CameraInfo;
+    using _RenderPassInfoVector = std::vector<_RenderPassInfo>;
 
-    typedef std::vector< RenderPassInfo > RenderPassInfoArray;
-    RenderPassInfoArray _renderPassesInfo;
-    std::vector< HdxDrawTargetRenderPassUniquePtr > _renderPasses;
+    static _RenderPassInfoVector _ComputeRenderPassInfos(
+        HdRenderIndex * renderIndex);
+
+    static _CameraInfo _ComputeCameraInfo(
+        const HdRenderIndex &renderIndex,
+        const HdStDrawTarget * drawTarget);
+    static void _UpdateLightingContext(
+        const _CameraInfo &cameraInfo,
+        GlfSimpleLightingContextConstRefPtr const &srcContext,
+        GlfSimpleLightingContextRefPtr const &ctx);
+    void _UpdateRenderPassState(
+        const HdRenderIndex &renderIndex,
+        const _CameraInfo &cameraInfo,
+        HdStSimpleLightingShaderSharedPtr const &lightingShader,
+        const HdStDrawTargetRenderPassState *srcState,
+        HdStRenderPassStateSharedPtr const &state) const;
+    static void _UpdateRenderPass(
+        _RenderPassInfo *info);
+
+    unsigned _currentDrawTargetSetVersion;
+    _RenderPassInfoVector _renderPassesInfo;
 
     // Raster State - close match to render task
     // but doesn't have enableHardwareShading
@@ -129,6 +143,9 @@ struct HdxDrawTargetTaskParams
         , depthBiasConstantFactor(0.0f)
         , depthBiasSlopeFactor(1.0f)
         , depthFunc(HdCmpFuncLEqual)
+        // XXX: When rendering draw targets we need alpha to coverage
+        // at least until we support a transparency pass
+        , enableAlphaToCoverage(true)
         , cullStyle(HdCullStyleBackUnlessDoubleSided)
         {}
 
@@ -150,6 +167,8 @@ struct HdxDrawTargetTaskParams
     float depthBiasSlopeFactor;
 
     HdCompareFunction depthFunc;
+
+    bool enableAlphaToCoverage;
 
     // Viewer's Render Style
     HdCullStyle cullStyle;

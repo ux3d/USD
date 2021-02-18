@@ -28,9 +28,6 @@
 {
     "techniques": {
         "default": {
-            "OutlineVertex": {
-                "source": [ "Outline.Vertex" ]
-            },
             "OutlineFragment": {
                 "source": [ "Outline.Fragment" ]
             }
@@ -38,41 +35,21 @@
     }
 }
 
--- glsl Outline.Vertex
-
-#version 120
-
-attribute vec4 position;
-attribute vec2 uvIn;
-
-varying vec2 uv;
-
-void main(void)
-{
-    gl_Position = position;
-    uv = uvIn;
-}
-
 -- glsl Outline.Fragment
-#version 120
 
 #define EPSILON 0.0001
 #define LARGE 100000
 
-varying vec2 uv; // Current texel coordinates.
-uniform sampler2D colorIn; // The color texture with the highlighted areas.
-uniform vec2 texelSize; // Size of a colorIn texel - to iterate adjacent texels.
-uniform bool enableOutline;
-uniform int radius; // The outline radius (thickness). 
+// The color texture with the highlighted areas.
 
 // Given a delta x and y in relation to the current texel coordinates, check if
 // the colorIn texture has a non-black texel and its distance^2 to the current
 // texel is smaller than the one passed as dist2. The color of that texel will
 // be returned in the color output var.
-void testTexel(int x, int y, inout float dist2, inout vec4 color)
+void testTexel(int x, int y, REF(thread,float) dist2, REF(thread,vec4) color)
 {
-    vec2 texCoords = uv + vec2(x, y) * texelSize;
-    vec4 c = texture2D(colorIn, texCoords);
+    vec2 texCoords = uvOut + vec2(x, y) * texelSize;
+    vec4 c = HdGet_colorIn(texCoords);
 
     if ( c.r > EPSILON || c.g > EPSILON || c.b > EPSILON) {
         float d = float(x * x + y * y );
@@ -86,7 +63,7 @@ void testTexel(int x, int y, inout float dist2, inout vec4 color)
 // Used by testOctants() to scan each horizontal line in the circle.
 // Returns the distance^2 and color of the non-black texel that is closest to
 // the current texel.
-void testHLine(int x0, int x1, int y, inout float dist2, inout vec4 color) {
+void testHLine(int x0, int x1, int y, REF(thread,float) dist2, REF(thread,vec4) color) {
     for (int x = x0; x < x1; x++) {
         testTexel(x, y, dist2, color);
     }
@@ -97,7 +74,7 @@ void testHLine(int x0, int x1, int y, inout float dist2, inout vec4 color) {
 // horizontal lines that define the circle and its interior.
 // Returns the distance^2 and color of the non-black texel that is closest to
 // the current texel.
-void testOctants(int x, int y, inout float dist2, inout vec4 color) {
+void testOctants(int x, int y, REF(thread,float) dist2, REF(thread,vec4) color) {
     testHLine(-x, x,  y, dist2, color);
     testHLine(-x, x, -y, dist2, color);
     testHLine(-y, y,  x, dist2, color);
@@ -109,7 +86,7 @@ void testOctants(int x, int y, inout float dist2, inout vec4 color) {
 // in the current texel. (Note: distance^2 is used to avoid sqrt).
 // This uses the Bresenham circle algorithm to discover the texels inside that
 // circle, to avoid having to read the colorIn texels outside of it.
-void testCircle(int r, inout float dist2, inout vec4 color) {
+void testCircle(int r, REF(thread,float) dist2, REF(thread,vec4) color) {
     if (r < 0) { r = 0; }
 
     int d = 3 - (2 * r);
@@ -141,17 +118,16 @@ void testCircle(int r, inout float dist2, inout vec4 color) {
 
 void main()
 {
-    gl_FragColor = vec4(0, 0, 0, 1);
-
+    hd_FragColor = vec4(0, 0, 0, 1);
     // Check if the current texel is not black - meaning that we are inside an
     // area of colorId that has been highlighted.
-    vec4 color = texture2D(colorIn, uv);
+    vec4 color = HdGet_colorIn(uvOut);
     bool isInside = color.r > EPSILON || color.g > EPSILON || color.b > EPSILON;
 
-    if (!enableOutline) { 
+    if (enableOutline==0) { 
         if (isInside) {
             // Inside the highlighted areas in colorIn : render colorIn.
-            gl_FragColor = color;
+            hd_FragColor = color;
         }
     } else {
         
@@ -171,10 +147,9 @@ void main()
                 float factor = (r2 - dist2 ) / r2;
                 factor *= factor;
                 
-                gl_FragColor = color * factor;
-                gl_FragColor.a = 1;
+                hd_FragColor = color * factor;
+                hd_FragColor.a = 1;
             }
         }
     }
 }
-

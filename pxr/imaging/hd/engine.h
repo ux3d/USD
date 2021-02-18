@@ -62,11 +62,20 @@ public:
     /// Adds or updates the value associated with the token.
     /// Only one is supported for each token.
     HD_API
-    void SetTaskContextData(const TfToken &id, VtValue &data);
+    void SetTaskContextData(const TfToken &id, const VtValue &data);
+
+    /// If found, will return the value from the task context data associated
+    /// with the token. Returns false if the data could not be found.
+    HD_API
+    bool GetTaskContextData(const TfToken &id, VtValue *data) const;
 
     /// Removes the specified token.
     HD_API
     void RemoveTaskContextData(const TfToken &id);
+
+    /// Removes all keys.
+    HD_API
+    void ClearTaskContextData();
 
     /// @}
 
@@ -74,9 +83,6 @@ public:
     HD_API
     void Execute(HdRenderIndex *index,
                  HdTaskSharedPtrVector *tasks);
-
-    HD_API
-    void ReloadAllShaders(HdRenderIndex& index);
 
 
 private:
