@@ -96,6 +96,9 @@ PROPERTY_NAMESPACE_PREFIX = "propertyNamespacePrefix"
 # in the schema definition to define a list of typed schemas that the API 
 # schema will be automatically applied to in the schema registry. 
 API_AUTO_APPLY = "apiSchemaAutoApplyTo"
+API_CAN_ONLY_APPLY = "apiSchemaCanOnlyApplyTo"
+API_ALLOWED_INSTANCE_NAMES = "apiSchemaAllowedInstanceNames"
+API_SCHEMA_INSTANCES = "apiSchemaInstances"
 
 # Custom-data key authored on a concrete typed schema class prim in the schema
 # definition, to define fallbacks for the type that can be saved in root layer
@@ -147,13 +150,12 @@ def _GetLibMetadata(layer):
     globalPrim = layer.GetPrimAtPath('/GLOBAL')
     if not globalPrim:
         raise Exception("Code generation requires a \"/GLOBAL\" prim with "
-            "customData to define at least libraryName and libraryPath. "
-            "GLOBAL prim not found.")
+            "customData to define at least libraryName. GLOBAL prim not found.")
     
     if not globalPrim.customData:
         raise Exception("customData is either empty or not defined on /GLOBAL "
-            "prim. At least \"libraryName\" and \"libraryPath\" entries in "
-            "customData are required for code generation.")
+            "prim. At least \"libraryName\" entries in customData are required "
+            "for code generation.")
     
     # Return a copy of customData to avoid accessing an invalid map proxy during
     # template rendering.
@@ -174,11 +176,15 @@ def _GetLibName(layer):
 def _GetLibPath(layer):
     """ Return the libraryPath defined in layer."""
 
+    if _SkipCodeGenForLayer(layer):
+        return ""
+
     libData = _GetLibMetadata(layer)
-    if 'libraryPath' not in libData:
+    if 'libraryPath' not in libData: 
         raise Exception("Code generation requires that \"libraryPath\" be "
-            "defined in customData on /GLOBAL prim.  The format for "
-            "libraryPath is \"path/to/lib\".")
+            "defined in customData on /GLOBAL prim or the schema must be "
+            "declared codeless, by specifying skipCodeGeneration=true. "
+            "The format for libraryPath is \"path/to/lib\".")
 
     return libData['libraryPath']
 
@@ -208,22 +214,24 @@ def _GetUseExportAPI(layer):
 
     return _GetLibMetadata(layer).get('useExportAPI', True)
 
-def _IsDynamicSchemaLayer(layer):
-    """ Return whether the layer is defined as a dynamic schema layer."""
+def _SkipCodeGenForLayer(layer):
+    """ Return whether the layer specifies that code generation should 
+    be skipped for its schemas."""
 
     # This can be called on sublayers which may not necessarily have lib 
     # metadata so we can ignore exceptions and return false.
     try:
-        return _GetLibMetadata(layer).get('isDynamic', False)
+        return _GetLibMetadata(layer).get('skipCodeGeneration', False)
     except:
         return False
 
-def _IsDynamicSchemaLib(stage):
-    """ Return whether the given stage has a dynamic schema layer that makes 
-    the schema library itself dynamic"""
+def _SkipCodeGenForSchemaLib(stage):
+    """ Return whether the stage has a layer that specifies that code generation
+    should be skipped for its schemas and therefore for the the entire schema
+    library."""
 
     for layer in stage.GetLayerStack():
-        if _IsDynamicSchemaLayer(layer):
+        if _SkipCodeGenForLayer(layer):
             return True
     return False
     
@@ -240,7 +248,8 @@ def _ProperCase(aString):
         stripping out any non-alphanumeric characters.
     """
     if len(aString) > 1:
-        return ''.join([s[0].upper() + s[1:] for s in re.split(r'\W+', aString)])
+        return ''.join([s[0].upper() + s[1:] for s in re.split(r'\W+', aString) \
+            if len(s) > 0])
     else:
         return aString.upper()
 
@@ -466,12 +475,29 @@ class ClassInfo(object):
         self.propertyNamespacePrefix = \
             self.customData.get(PROPERTY_NAMESPACE_PREFIX)
         self.apiAutoApply = self.customData.get(API_AUTO_APPLY)
+        self.apiCanOnlyApply = self.customData.get(API_CAN_ONLY_APPLY)
+        self.apiAllowedInstanceNames = self.customData.get(
+            API_ALLOWED_INSTANCE_NAMES)
+        self.apiSchemaInstances = self.customData.get(API_SCHEMA_INSTANCES)
+                               
+        if self.apiSchemaType != MULTIPLE_APPLY:
+            if self.propertyNamespacePrefix:
+                raise _GetSchemaDefException(
+                    "%s should only be used as a customData field on "
+                    "multiple-apply API schemas." % PROPERTY_NAMESPACE_PREFIX,
+                    sdfPrim.path)
 
-        if not self.apiSchemaType == MULTIPLE_APPLY and \
-            self.propertyNamespacePrefix:
-            raise _GetSchemaDefException("propertyNamespacePrefix should only "
-                "be used as a customData field on multiple-apply API schemas",
-                sdfPrim.path)
+            if self.apiAllowedInstanceNames:
+                raise _GetSchemaDefException(
+                    "%s should only be used as a customData field on "
+                    "multiple-apply API schemas." % API_ALLOWED_INSTANCE_NAMES,
+                    sdfPrim.path)
+
+            if self.apiSchemaInstances:
+                raise _GetSchemaDefException(
+                    "%s should only be used as a customData field on "
+                    "multiple-apply API schemas." % API_SCHEMA_INSTANCES,
+                    sdfPrim.path)
 
         if self.isApi and \
            self.apiSchemaType not in API_SCHEMA_TYPE_TOKENS:
@@ -482,12 +508,17 @@ class ClassInfo(object):
 
         if self.apiAutoApply and self.apiSchemaType != SINGLE_APPLY:
             raise _GetSchemaDefException("%s should only be used as a "
-                "customData field on single-apply API schemas" % API_AUTO_APPLY,
+                "customData field on single-apply API schemas." % API_AUTO_APPLY,
                 sdfPrim.path)
 
         self.isAppliedAPISchema = \
             self.apiSchemaType in [SINGLE_APPLY, MULTIPLE_APPLY]
         self.isMultipleApply = self.apiSchemaType == MULTIPLE_APPLY
+
+        if self.apiCanOnlyApply and not self.isAppliedAPISchema:
+            raise _GetSchemaDefException("%s should only be used as a "
+                "customData field on applied API schemas." % API_CAN_ONLY_APPLY,
+                sdfPrim.path)
 
         if self.isApi and not self.isAppliedAPISchema:
             self.schemaKind = "nonAppliedAPI";
@@ -715,7 +746,7 @@ def ParseUsd(usdFilePath):
             _GetTokensPrefix(sdfLayer),
             _GetUseExportAPI(sdfLayer),
             _GetLibTokens(sdfLayer),
-            _IsDynamicSchemaLib(stage),
+            _SkipCodeGenForSchemaLib(stage),
             classes)
 
 
@@ -857,8 +888,12 @@ def GatherTokens(classes, libName, libTokens):
             # Add default value (if token type) to token set
             if attr.typeName == Sdf.ValueTypeNames.Token and attr.fallback:
                 fallbackName = _CamelCase(attr.fallback)
-                desc = 'Default value for %s::Get%sAttr()' % \
-                       (cls.cppClassName, _ProperCase(attr.name))
+                if attr.apiName != '':
+                    desc = 'Default value for %s::Get%sAttr()' % \
+                           (cls.cppClassName, _ProperCase(attr.apiName))
+                else:
+                    desc = 'Default value for %s schema attribute %s' % \
+                           (cls.cppClassName, attr.rawName)
                 cls.tokens.add(fallbackName)
                 _AddToken(tokenDict, fallbackName, attr.fallback, desc)
             
@@ -869,8 +904,12 @@ def GatherTokens(classes, libName, libTokens):
                     # but do not declare a named literal for it.
                     if val != '':
                         tokenId = _CamelCase(val)
-                        desc = 'Possible value for %s::Get%sAttr()' % \
-                               (cls.cppClassName, _ProperCase(attr.name))
+                        if attr.apiName != '':
+                            desc = 'Possible value for %s::Get%sAttr()' % \
+                                   (cls.cppClassName, _ProperCase(attr.apiName))
+                        else:
+                            desc = 'Possible value for %s schema attribute %s' % \
+                                   (cls.cppClassName, attr.rawName)
                         cls.tokens.add(tokenId)
                         _AddToken(tokenDict, tokenId, val, desc)
 
@@ -994,6 +1033,41 @@ def GenerateCode(templatePath, codeGenPath, tokenData, classes, validate,
         _WriteFile(clsWrapFilePath,
                    wrapTemplate.render(cls=cls) + customCode, validate)
 
+# Updates the plugInfo class metadata clsDict with the API schema application
+# metadata from the class
+def _UpdatePlugInfoWithAPISchemaApplyInfo(clsDict, cls):
+
+    if not cls.isAppliedAPISchema:
+        return
+
+    # List any auto apply to entries for the applied API schema.
+    if cls.apiAutoApply:
+        clsDict.update({API_AUTO_APPLY: list(cls.apiAutoApply)})
+
+    # List any can only apply to entries for applied API schemas.
+    if cls.apiCanOnlyApply:
+        clsDict.update({API_CAN_ONLY_APPLY: list(cls.apiCanOnlyApply)})
+
+    # List any allowed instance names for multiple apply schemas.
+    if cls.apiAllowedInstanceNames:
+        clsDict.update(
+            {API_ALLOWED_INSTANCE_NAMES: list(cls.apiAllowedInstanceNames)})
+
+    # Add any per instance name apply metadata in another dicitionary for 
+    # multiple apply schemas.
+    if cls.apiSchemaInstances:
+        instancesDict = {}
+        for k, v in cls.apiSchemaInstances.items():
+            instance = {}
+            # There can be canOnlyApplyTo metadata on a per isntance basis.
+            if v.get(API_CAN_ONLY_APPLY):
+                instance.update(
+                    {API_CAN_ONLY_APPLY: list(v.get(API_CAN_ONLY_APPLY))})
+            if instance:
+                instancesDict.update({k : instance})
+        if instancesDict:
+            clsDict.update({API_SCHEMA_INSTANCES: instancesDict})
+
 def GeneratePlugInfo(templatePath, codeGenPath, classes, validate, env):
 
     #
@@ -1061,13 +1135,13 @@ def GeneratePlugInfo(templatePath, codeGenPath, classes, validate, env):
 
             clsDict.update({"schemaKind": cls.schemaKind})
 
-            # List any auto apply to entries for single apply schemas.
-            if cls.apiSchemaType == SINGLE_APPLY and cls.apiAutoApply:
-                clsDict.update(
-                    {"apiSchemaAutoApplyTo": list(cls.apiAutoApply)})
+            # Add all the API schema apply info fields to to the plugInfo. 
+            # This may include auto-apply, can-only-apply, and allowed names 
+            # for multiple apply schemas.
+            _UpdatePlugInfoWithAPISchemaApplyInfo(clsDict, cls)
 
             # Write out alias/primdefs for concrete IsA schemas and API schemas
-            if (cls.isConcrete or cls.isApi):
+            if (cls.isTyped or cls.isApi):
                 clsDict['alias'] = {'UsdSchemaBase': cls.usdPrimTypeName}
 
             types[cls.cppClassName] = clsDict
@@ -1351,7 +1425,7 @@ if __name__ == '__main__':
         tokensPrefix, \
         useExportAPI, \
         libTokens, \
-        isDynamicSchemaLib, \
+        skipCodeGen, \
         classes = ParseUsd(schemaPath)
         tokenData = GatherTokens(classes, libName, libTokens)
         
@@ -1382,8 +1456,8 @@ if __name__ == '__main__':
                               tokensPrefix=tokensPrefix,
                               useExportAPI=useExportAPI)
 
-        # Don't generate code for dynamic schema libraries
-        if not isDynamicSchemaLib:
+        # Generate code for schema libraries that aren't specified as codeless.
+        if not skipCodeGen:
             GenerateCode(templatePath, codeGenPath, tokenData, classes, 
                          args.validate,
                          namespaceOpen, namespaceClose, namespaceUsing,

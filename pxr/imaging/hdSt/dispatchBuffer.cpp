@@ -187,25 +187,23 @@ HdStDispatchBuffer::HdStDispatchBuffer(
     HgiBufferDesc bufDesc;
     bufDesc.usage = HgiBufferUsageUniform;
     bufDesc.byteSize = dataSize;
-    HgiBufferHandle newId = _resourceRegistry->GetHgi()->CreateBuffer(bufDesc);
+    HgiBufferHandle buffer = _resourceRegistry->GetHgi()->CreateBuffer(bufDesc);
 
     // monolithic resource
-    _entireResource = HdStBufferResourceSharedPtr(
-        new HdStBufferResource(
-            role, {HdTypeInt32, 1},
-            /*offset=*/0, stride));
-    _entireResource->SetAllocation(newId, dataSize);
+    _entireResource = std::make_shared<HdStBufferResource>(
+        role, HdTupleType{HdTypeInt32, 1}, /*offset=*/0, stride);
+    _entireResource->SetAllocation(buffer, dataSize);
 
     // create a buffer array range, which aggregates all views
     // (will be added by AddBufferResourceView)
-    _bar = HdStBufferArrayRangeSharedPtr(
-        new Hd_DispatchBufferArrayRange(resourceRegistry, this));
+    _bar = std::make_shared<Hd_DispatchBufferArrayRange>(
+        resourceRegistry, this);
 }
 
 HdStDispatchBuffer::~HdStDispatchBuffer()
 {
-    HgiBufferHandle& id = _entireResource->GetId();
-    _resourceRegistry->GetHgi()->DestroyBuffer(&id);
+    HgiBufferHandle& buffer = _entireResource->GetHandle();
+    _resourceRegistry->GetHgi()->DestroyBuffer(&buffer);
     _entireResource->SetAllocation(HgiBufferHandle(), 0);
 }
 
@@ -224,7 +222,7 @@ HdStDispatchBuffer::CopyData(std::vector<uint32_t> const &data)
     blitOp.byteSize = _entireResource->GetSize();
     blitOp.cpuSourceBuffer = data.data();
     blitOp.sourceByteOffset = 0;
-    blitOp.gpuDestinationBuffer = _entireResource->GetId();
+    blitOp.gpuDestinationBuffer = _entireResource->GetHandle();
     blitOp.destinationByteOffset = 0;
     blitCmds->CopyBufferCpuToGpu(blitOp);
     hgi->SubmitCmds(blitCmds.get());
@@ -241,7 +239,7 @@ HdStDispatchBuffer::AddBufferResourceView(
         _AddResource(name, tupleType, offset, stride);
 
     // this is just a view, not consuming memory
-    view->SetAllocation(_entireResource->GetId(), /*size=*/0);
+    view->SetAllocation(_entireResource->GetHandle(), /*size=*/0);
 }
 
 
@@ -275,9 +273,10 @@ HdStDispatchBuffer::GetResource() const
 
     if (TfDebug::IsEnabled(HD_SAFE_MODE)) {
         // make sure this buffer array has only one resource.
-        HgiBufferHandle const& id = _resourceList.begin()->second->GetId();
+        HgiBufferHandle const& buffer =
+                _resourceList.begin()->second->GetHandle();
         TF_FOR_ALL (it, _resourceList) {
-            if (it->second->GetId() != id) {
+            if (it->second->GetHandle() != buffer) {
                 TF_CODING_ERROR("GetResource(void) called on"
                                 "HdBufferArray having multiple GPU resources");
             }
@@ -318,9 +317,9 @@ HdStDispatchBuffer::_AddResource(TfToken const& name,
         }
     }
 
-    HdStBufferResourceSharedPtr bufferRes = HdStBufferResourceSharedPtr(
-        new HdStBufferResource(GetRole(), tupleType,
-                                 offset, stride));
+    HdStBufferResourceSharedPtr bufferRes = 
+        std::make_shared<HdStBufferResource>(
+            GetRole(), tupleType, offset, stride);
 
     _resourceList.emplace_back(name, bufferRes);
     return bufferRes;

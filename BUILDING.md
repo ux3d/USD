@@ -266,9 +266,10 @@ For further information see the documentation on the Alembic plugin [here](http:
 
 ##### MaterialX Plugin
 
-Enable the [MaterialX](https://github.com/materialx/materialx) plugin in the 
-build by specifying the cmake flag ```PXR_BUILD_MATERIALX_PLUGIN=TRUE``` when 
-invoking cmake.
+Enable [MaterialX](https://github.com/materialx/materialx) support in the 
+build by specifying the cmake flag ```PXR_ENABLE_MATERIALX_SUPPORT=TRUE``` when 
+invoking cmake. Note that MaterialX with shared library support is required on 
+Linux and MacOS.
 
 The additional dependencies that must be supplied when invoking cmake are:
 
@@ -277,8 +278,6 @@ The additional dependencies that must be supplied when invoking cmake are:
 | MATERIALX_ROOT     | The root path to a MaterialX SDK install.| 
 
 See [3rd Party Library and Application Versions](VERSIONS.md) for version information.
-
-For further information see our additional documentation on the MaterialX plugins [here](http://openusd.org/docs/MaterialX-USD-Plugins.html).
 
 ##### Draco Plugin
 
@@ -604,3 +603,10 @@ platforms to avoid issues with Boost config files (introduced in Boost version
 to use Boost specified config files for their USD build, specify 
 -DBoost_NO_BOOST_CMAKE=OFF when running cmake.
 
+2. Windows and Python 3.8+
+Python 3.8 and later on Windows will no longer search PATH for DLL dependencies.
+Instead, clients can call `os.add_dll_directory(p)` to set paths to search.
+By default on that platform USD will iterate over PATH and add all paths using
+`os.add_dll_directory()` when importing Python modules. Users may override
+this by setting the environment variable `PXR_USD_WINDOWS_DLL_PATH` to a PATH-like
+string. If this is set, USD will use these paths instead.

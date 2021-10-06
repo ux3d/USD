@@ -23,7 +23,7 @@
 # language governing permissions and limitations under the Apache License.
 
 from __future__ import print_function
-from pxr import Tf, Sdf, Usd, UsdMtlx, UsdShade
+from pxr import Ar, Tf, Sdf, Usd, UsdMtlx, UsdShade
 import unittest
 
 def _EmptyLayer():
@@ -151,6 +151,45 @@ class TestFileFormat(unittest.TestCase):
 
         stage = UsdMtlx._TestFile('Looks.mtlx')
         stage.GetRootLayer().Export('Looks.usda')
+
+    def test_StdlibShaderRefs(self):
+        """
+        Test that we can use a shader nodedef from the MaterialX stdlib.
+        """
+
+        stage = UsdMtlx._TestFile('usd_preview_surface_gold.mtlx')
+        # check stage contents
+        mprim = stage.GetPrimAtPath("/MaterialX/Materials/USD_Gold")
+        self.assertTrue(mprim)
+        material = UsdShade.Material(mprim)
+        self.assertTrue(material)
+        input = material.GetInput("specularColor")
+        self.assertTrue(input)
+        self.assertEqual(input.GetFullName(),"inputs:specularColor")
+
+    @unittest.skipIf(not hasattr(Ar.Resolver, "CreateIdentifier"),
+                     "Requires Ar 2.0")
+    def test_XInclude(self):
+        """
+        Verify documents referenced via XInclude statements are read
+        properly.
+        """
+        stage = UsdMtlx._TestFile('include/Include.mtlx')
+        stage.GetRootLayer().Export('Include.usda')
+
+        stage = UsdMtlx._TestFile('include/Include.usdz[Include.mtlx]')
+        stage.GetRootLayer().Export('Include_From_Usdz.usda')
+
+    @unittest.skipIf(not hasattr(Ar.Resolver, "CreateIdentifier"),
+                     "Requires Ar 2.0")
+    def test_EmbedInUSDZ(self):
+        """
+        Verify that a MaterialX file can be read from within a .usdz file.
+        """
+
+        stage = UsdMtlx._TestFile(
+            'usd_preview_surface_gold.usdz[usd_preview_surface_gold.mtlx]')
+        stage.GetRootLayer().Export('usd_preview_surface_gold.usda')
 
 if __name__ == '__main__':
     unittest.main()

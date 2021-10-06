@@ -38,6 +38,7 @@ from functools import cmp_to_key
 from pxr import Usd, UsdGeom, UsdShade, UsdUtils, UsdImagingGL, Glf, Sdf, Tf, Ar
 from pxr import UsdAppUtils
 from pxr.UsdAppUtils.complexityArgs import RefinementComplexities
+from pxr.UsdUtils.constantsGroup import ConstantsGroup
 
 # UI Components
 from ._usdviewq import Utils
@@ -55,7 +56,6 @@ from .primViewItem import PrimViewItem
 from .variantComboBox import VariantComboBox
 from .legendUtil import ToggleLegendWithBrowser
 from . import prettyPrint, adjustClipping, adjustDefaultMaterial, preferences, settings
-from .constantGroup import ConstantGroup
 from .selectionDataModel import ALL_INSTANCES, SelectionDataModel
 
 # Common Utilities
@@ -82,7 +82,7 @@ from .pythonInterpreter import Myconsole
 
 SETTINGS_VERSION = "1"
 
-class HUDEntries(ConstantGroup):
+class HUDEntries(ConstantsGroup):
     # Upper HUD entries (declared in variables for abstraction)
     PRIM = "Prims"
     CV = "CVs"
@@ -97,10 +97,10 @@ class HUDEntries(ConstantGroup):
     # Name for prims that have no type
     NOTYPE = "Typeless"
 
-class PropertyIndex(ConstantGroup):
+class PropertyIndex(ConstantsGroup):
     VALUE, METADATA, LAYERSTACK, COMPOSITION = range(4)
 
-class UIDefaults(ConstantGroup):
+class UIDefaults(ConstantsGroup):
     STAGE_VIEW_WIDTH = 604
     PRIM_VIEW_WIDTH = 521
     ATTRIBUTE_VIEW_WIDTH = 682
@@ -277,8 +277,6 @@ class MainWindow(QtWidgets.QMainWindow):
         
 class AppController(QtCore.QObject):
 
-    HYDRA_DISABLED_OPTION_STRING = "HydraDisabled"
-
     ###########
     # Signals #
     ###########
@@ -397,14 +395,11 @@ class AppController(QtCore.QObject):
             # be restored later.
             self._viewerModeEscapeSizes = None
 
-            self._rendererNameOpt = parserData.renderer
-
-            if self._rendererNameOpt:
-                if self._rendererNameOpt == \
-                            AppController.HYDRA_DISABLED_OPTION_STRING:
-                    os.environ['HD_ENABLED'] = '0'
-                else:
-                    os.environ['HD_DEFAULT_RENDERER'] = self._rendererNameOpt
+            if parserData.rendererPlugin == \
+                  UsdAppUtils.rendererArgs.HYDRA_DISABLED_OPTION_STRING:
+                os.environ['HD_ENABLED'] = '0'
+            elif parserData.rendererPlugin:
+                os.environ['HD_DEFAULT_RENDERER'] = parserData.rendererPlugin
 
             self._openSettings2(parserData.defaultSettings)
 
@@ -431,6 +426,7 @@ class AppController(QtCore.QObject):
             # statusBar saves considerable GUI configuration time.
             self._mainWindow.show()
             self._mainWindow.setFocus()
+            self._mainWindow.activateWindow()
             
             # Install our custom event filter.  The member assignment of the
             # filter is just for lifetime management
@@ -1363,19 +1359,6 @@ class AppController(QtCore.QObject):
 
         self._refreshCameraListAndMenu(preserveCurrCamera = preserveCamera)
 
-    @staticmethod
-    def GetRendererOptionChoices():
-        ids = UsdImagingGL.Engine.GetRendererPlugins()
-        choices = []
-        if ids:
-            choices = [UsdImagingGL.Engine.GetRendererDisplayName(x) 
-                        for x in ids]
-            choices.append(AppController.HYDRA_DISABLED_OPTION_STRING)
-        else:
-            choices = [AppController.HYDRA_DISABLED_OPTION_STRING]
-
-        return choices
-
     # Render plugin support
     def _rendererPluginChanged(self, plugin):
         if self._stageView:
@@ -1397,9 +1380,11 @@ class AppController(QtCore.QObject):
                         action.setDisabled(True)
                         break
             else:
-                # Refresh the AOV menu, settings menu, and pause menu item
+                # Refresh the AOV menu, settings menu, and pause menu item,
+                # etc.
                 self._configureRendererAovs()
                 self._configureRendererSettings()
+                self._configureRendererCommands()
                 self._configurePauseAction()
                 self._configureStopAction()
 
@@ -1437,6 +1422,7 @@ class AppController(QtCore.QObject):
             # Refresh the AOV menu, settings menu, and pause menu item
             self._configureRendererAovs()
             self._configureRendererSettings()
+            self._configureRendererCommands()
             self._configurePauseAction()
             self._configureStopAction()
 
@@ -1622,6 +1608,26 @@ class AppController(QtCore.QObject):
                 widget.setValue(widget.defValue)
             if isinstance(widget, QtWidgets.QLineEdit):
                 widget.setText(widget.defValue)
+
+    # Renderer Command Support
+    def _invokeRendererCommand(self, cmd):
+        if self._stageView:
+            self._stageView.InvokeRendererCommand(cmd)
+            self._stageView.updateView()
+
+    def _configureRendererCommands(self):
+        if self._stageView:
+            self._ui.menuRendererCommands.clear()
+
+            cmds = self._stageView.GetRendererCommands()
+            for cmd in cmds:
+                action = self._ui.menuRendererCommands.addAction(
+                    cmd.commandDescription)
+                action.commandName = cmd.commandName
+                action.triggered[bool].connect(lambda _, cmd=cmd:
+                        self._invokeRendererCommand(cmd))
+
+            self._ui.menuRendererCommands.setEnabled(len(cmds) != 0)
 
     def _configurePauseAction(self):
         if self._stageView:
@@ -2251,9 +2257,6 @@ class AppController(QtCore.QObject):
     def _resetSettings(self):
         """Reloads the UI and Sets up the initial settings for the
         _stageView object created in _reloadVaryingUI"""
-
-        # Seems like a good time to clear the texture registry
-        Glf.TextureRegistry.Reset()
 
         # RELOAD fixed and varying UI
         self._reloadFixedUI()

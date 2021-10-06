@@ -75,13 +75,9 @@ UsdShadeNodeGraph::Define(
 }
 
 /* virtual */
-UsdSchemaKind UsdShadeNodeGraph::_GetSchemaKind() const {
+UsdSchemaKind UsdShadeNodeGraph::_GetSchemaKind() const
+{
     return UsdShadeNodeGraph::schemaKind;
-}
-
-/* virtual */
-UsdSchemaKind UsdShadeNodeGraph::_GetSchemaType() const {
-    return UsdShadeNodeGraph::schemaType;
 }
 
 /* static */
@@ -163,9 +159,9 @@ UsdShadeNodeGraph::GetOutput(const TfToken &name) const
 }
 
 std::vector<UsdShadeOutput>
-UsdShadeNodeGraph::GetOutputs() const
+UsdShadeNodeGraph::GetOutputs(bool onlyAuthored) const
 {
-    return UsdShadeConnectableAPI(GetPrim()).GetOutputs();
+    return UsdShadeConnectableAPI(GetPrim()).GetOutputs(onlyAuthored);
 }
 
 UsdShadeShader
@@ -221,9 +217,9 @@ UsdShadeNodeGraph::GetInput(const TfToken &name) const
 }
 
 std::vector<UsdShadeInput>
-UsdShadeNodeGraph::GetInputs() const
+UsdShadeNodeGraph::GetInputs(bool onlyAuthored) const
 {
-    return UsdShadeConnectableAPI(GetPrim()).GetInputs();
+    return UsdShadeConnectableAPI(GetPrim()).GetInputs(onlyAuthored);
 }
 
 std::vector<UsdShadeInput> 
@@ -383,36 +379,10 @@ bool
 UsdShadeNodeGraph::ConnectableAPIBehavior::CanConnectOutputToSource(
     const UsdShadeOutput &output,
     const UsdAttribute &source,
-    std::string *reason)
+    std::string *reason) const
 {
-    // Nodegraphs allow connections to their outputs, but only from
-    // internal nodes.
-    if (!output.IsDefined()) {
-        if (reason) {
-            *reason = TfStringPrintf("Invalid output");
-        }
-        return false;
-    }
-    if (!source) {
-        if (reason) {
-            *reason = TfStringPrintf("Invalid source");
-        }
-        return false;
-    }
-    // Ensure that the source prim is a descendent of the node-graph owning 
-    // the output.
-    const SdfPath sourcePrimPath = source.GetPrim().GetPath();
-    const SdfPath outputPrimPath = output.GetPrim().GetPath();
-    if (!sourcePrimPath.HasPrefix(outputPrimPath)) {
-        if (reason) {
-            *reason = TfStringPrintf("Source of output '%s' on node-graph "
-                "at path <%s> is outside the node-graph: <%s>",
-                source.GetName().GetText(), outputPrimPath.GetText(),
-                sourcePrimPath.GetText());
-        }
-        return false;
-    }
-    return true;
+    return UsdShadeConnectableAPIBehavior::_CanConnectOutputToSource(
+            output, source, reason);
 }
 
 bool

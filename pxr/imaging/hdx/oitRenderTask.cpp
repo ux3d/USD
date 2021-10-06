@@ -23,22 +23,18 @@
 //
 #include "pxr/imaging/garch/glApi.h"
 
-#include "pxr/imaging/hdx/package.h"
 #include "pxr/imaging/hdx/oitRenderTask.h"
+#include "pxr/imaging/hdx/package.h"
 #include "pxr/imaging/hdx/oitBufferAccessor.h"
-#include "pxr/imaging/hdx/tokens.h"
-#include "pxr/imaging/hdx/debugCodes.h"
 
-#include "pxr/imaging/hd/perfLog.h"
 #include "pxr/imaging/hd/renderDelegate.h"
 #include "pxr/imaging/hd/renderIndex.h"
-#include "pxr/imaging/hd/renderPass.h"
-#include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/rprimCollection.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
 
-#include "pxr/imaging/hdSt/lightingShader.h"
 #include "pxr/imaging/hdSt/renderPassShader.h"
+
+#include "pxr/imaging/glf/diagnostic.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -54,9 +50,7 @@ HdxOitRenderTask::HdxOitRenderTask(HdSceneDelegate* delegate, SdfPath const& id)
 {
 }
 
-HdxOitRenderTask::~HdxOitRenderTask()
-{
-}
+HdxOitRenderTask::~HdxOitRenderTask() = default;
 
 void
 HdxOitRenderTask::_Sync(
@@ -84,7 +78,7 @@ HdxOitRenderTask::Prepare(HdTaskContext* ctx,
 
         // OIT buffers take up significant GPU resources. Skip if there are no
         // oit draw items (i.e. no translucent or volumetric draw items)
-        if (_GetDrawItemCount() > 0) {
+        if (HdxRenderTask::_HasDrawItems()) {
             HdxOitBufferAccessor(ctx).RequestOitBuffers();
         }
     }
@@ -96,17 +90,26 @@ HdxOitRenderTask::Execute(HdTaskContext* ctx)
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
 
+    GLF_GROUP_FUNCTION();
+
     if (!_isOitEnabled) return;
-    if (_GetDrawItemCount() == 0) return;
+    if (!HdxRenderTask::_HasDrawItems()) return;
 
     //
     // Pre Execute Setup
     //
+    {
+        HdxOitBufferAccessor oitBufferAccessor(ctx);
 
-    HdxOitBufferAccessor oitBufferAccessor(ctx);
-
-    oitBufferAccessor.RequestOitBuffers();
-    oitBufferAccessor.InitializeOitBuffersIfNecessary();
+        oitBufferAccessor.RequestOitBuffers();
+        oitBufferAccessor.InitializeOitBuffersIfNecessary();
+        if (!oitBufferAccessor.AddOitBufferBindings(
+                _oitTranslucentRenderPassShader)) {
+            TF_CODING_ERROR(
+                "No OIT buffers allocated but needed by OIT render task");
+            return;
+        }
+    }
 
     HdRenderPassStateSharedPtr renderPassState = _GetRenderPassState(ctx);
     if (!TF_VERIFY(renderPassState)) return;
@@ -117,14 +120,15 @@ HdxOitRenderTask::Execute(HdTaskContext* ctx)
         return;
     }
 
-    extendedState->SetOverrideShader(HdStShaderCodeSharedPtr());
-
-    if (!oitBufferAccessor.AddOitBufferBindings(
-            _oitTranslucentRenderPassShader)) {
-        TF_CODING_ERROR(
-            "No OIT buffers allocated but needed by OIT render task");
-        return;
+    // Render pass state overrides
+    {
+        extendedState->SetUseSceneMaterials(true);
+        // blending is relevant only for the oitResolve task.
+        extendedState->SetBlendEnabled(false);
+        extendedState->SetAlphaToCoverageEnabled(false);
+        extendedState->SetAlphaThreshold(0.f);
     }
+
     
     // We render into a SSBO -- not MSSA compatible
     bool oldMSAA = glIsEnabled(GL_MULTISAMPLE);
@@ -148,25 +152,32 @@ HdxOitRenderTask::Execute(HdTaskContext* ctx)
         extendedState->GetCullStyle());
 
     //
-    // Opaque pixels pass
-    // These pixels are rendered to FB instead of OIT buffers
+    // 1. Opaque pixels pass
+    // 
+    // Fragments that are opaque (alpha > 1.0) are rendered to the active
+    // framebuffer. Translucent fragments are discarded.
+    // This can reduce the data written to the OIT SSBO buffers because of
+    // improved depth testing.
     //
-    extendedState->SetRenderPassShader(_oitOpaqueRenderPassShader);
-    renderPassState->SetEnableDepthMask(true);
-    renderPassState->SetColorMask(HdRenderPassState::ColorMaskRGBA);
+    {
+        extendedState->SetRenderPassShader(_oitOpaqueRenderPassShader);
+        renderPassState->SetEnableDepthMask(true);
+        renderPassState->SetColorMasks({HdRenderPassState::ColorMaskRGBA});
 
-    // We resolve the AOVs just before rendering any OIT geometry, so
-    // avoid using the multisampled AOVs.
-    renderPassState->SetUseAovMultiSample(false);
-    HdxRenderTask::Execute(ctx);
+        HdxRenderTask::Execute(ctx);
+    }
 
     //
-    // Translucent pixels pass
+    // 2. Translucent pixels pass
     //
-    extendedState->SetRenderPassShader(_oitTranslucentRenderPassShader);
-    renderPassState->SetEnableDepthMask(false);
-    renderPassState->SetColorMask(HdRenderPassState::ColorMaskNone);
-    HdxRenderTask::Execute(ctx);
+    // Fill OIT SSBO buffers for the translucent fragments.  
+    //
+    {
+        extendedState->SetRenderPassShader(_oitTranslucentRenderPassShader);
+        renderPassState->SetEnableDepthMask(false);
+        renderPassState->SetColorMasks({HdRenderPassState::ColorMaskNone});
+        HdxRenderTask::Execute(ctx);
+    }
 
     //
     // Post Execute Restore

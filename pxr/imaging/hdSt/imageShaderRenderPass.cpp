@@ -68,8 +68,8 @@ HdSt_ImageShaderRenderPass::HdSt_ImageShaderRenderPass(
 {
     _sharedData.instancerLevels = 0;
     _sharedData.rprimID = SdfPath("/imageShaderRenderPass");
-    _immediateBatch = HdSt_DrawBatchSharedPtr(
-        new HdSt_ImmediateDrawBatch(&_drawItemInstance));
+    _immediateBatch = 
+        std::make_shared<HdSt_ImmediateDrawBatch>(&_drawItemInstance);
 
     HdStRenderDelegate* renderDelegate =
         static_cast<HdStRenderDelegate*>(index->GetRenderDelegate());
@@ -169,6 +169,10 @@ HdSt_ImageShaderRenderPass::_Execute(
         gfxCmds->PushDebugGroup(__ARCH_PRETTY_FUNCTION__);
     }
 
+    // XXX: The Bind/Unbind calls below set/restore GL state.
+    // This will be reworked to use Hgi.
+    stRenderPassState->Bind();
+
     // Draw
     HdSt_DrawBatchSharedPtr const& batch = _immediateBatch;
     HgiGLGraphicsCmds* glGfxCmds = 
@@ -189,6 +193,8 @@ HdSt_ImageShaderRenderPass::_Execute(
         gfxCmds->PopDebugGroup();
         _hgi->SubmitCmds(gfxCmds.get());
     }
+
+    stRenderPassState->Unbind();
 }
 
 void

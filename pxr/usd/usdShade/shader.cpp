@@ -75,13 +75,9 @@ UsdShadeShader::Define(
 }
 
 /* virtual */
-UsdSchemaKind UsdShadeShader::_GetSchemaKind() const {
+UsdSchemaKind UsdShadeShader::_GetSchemaKind() const
+{
     return UsdShadeShader::schemaKind;
-}
-
-/* virtual */
-UsdSchemaKind UsdShadeShader::_GetSchemaType() const {
-    return UsdShadeShader::schemaType;
 }
 
 /* static */
@@ -139,10 +135,23 @@ PXR_NAMESPACE_CLOSE_SCOPE
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+class UsdShadeShader_ConnectableAPIBehavior :
+    public UsdShadeConnectableAPIBehavior
+{
+    // UsdShadeShader outputs are not connectable!
+    bool CanConnectOutputToSource(const UsdShadeOutput &output,
+                                  const UsdAttribute &source,
+                                  std::string *reason) const override
+    {
+        return false;
+    }
+};
+
 TF_REGISTRY_FUNCTION(UsdShadeConnectableAPI)
 {
     // UsdShadeShader prims are connectable, with default behavior rules.
-    UsdShadeRegisterConnectableAPIBehavior<UsdShadeShader>();
+    UsdShadeRegisterConnectableAPIBehavior<UsdShadeShader, 
+        UsdShadeShader_ConnectableAPIBehavior>();
 }
 
 UsdShadeShader::UsdShadeShader(const UsdShadeConnectableAPI &connectable)
@@ -170,9 +179,9 @@ UsdShadeShader::GetOutput(const TfToken &name) const
 }
 
 std::vector<UsdShadeOutput>
-UsdShadeShader::GetOutputs() const
+UsdShadeShader::GetOutputs(bool onlyAuthored) const
 {
-    return UsdShadeConnectableAPI(GetPrim()).GetOutputs();
+    return UsdShadeConnectableAPI(GetPrim()).GetOutputs(onlyAuthored);
 }
 
 UsdShadeInput
@@ -189,9 +198,9 @@ UsdShadeShader::GetInput(const TfToken &name) const
 }
 
 std::vector<UsdShadeInput>
-UsdShadeShader::GetInputs() const
+UsdShadeShader::GetInputs(bool onlyAuthored) const
 {
-    return UsdShadeConnectableAPI(GetPrim()).GetInputs();
+    return UsdShadeConnectableAPI(GetPrim()).GetInputs(onlyAuthored);
 }
 
 UsdAttribute

@@ -61,26 +61,26 @@ public:
     HdxOitResolveTask(HdSceneDelegate* delegate, SdfPath const& id);
 
     HDX_API
-    virtual ~HdxOitResolveTask();
+    ~HdxOitResolveTask() override;
 
     /// Sync the resolve pass resources
     HDX_API
-    virtual void Sync(HdSceneDelegate* delegate,
-                      HdTaskContext* ctx,
-                      HdDirtyBits* dirtyBits) override;
+    void Sync(HdSceneDelegate* delegate,
+              HdTaskContext* ctx,
+              HdDirtyBits* dirtyBits) override;
 
     /// Prepare the tasks resources
     ///
     /// Allocates OIT buffers if requested by OIT render task
     HDX_API
-    virtual void Prepare(HdTaskContext* ctx,
-                         HdRenderIndex* renderIndex) override;
+    void Prepare(HdTaskContext* ctx,
+                 HdRenderIndex* renderIndex) override;
 
     /// Execute render pass task
     ///
     /// Resolves OIT buffers
     HDX_API
-    virtual void Execute(HdTaskContext* ctx) override;
+    void Execute(HdTaskContext* ctx) override;
 
 private:
     HdxOitResolveTask() = delete;
@@ -92,9 +92,12 @@ private:
         HdRenderIndex* renderIndex,
         GfVec2i const& screenSize);
 
-    void _PrepareAovBindings(
-        HdTaskContext* ctx,
-        HdRenderIndex* renderIndex);
+    GfVec2i _ComputeScreenSize(
+        HdTaskContext *ctx,
+        HdRenderIndex* renderIndex) const;
+
+    const HdRenderPassAovBindingVector &_GetAovBindings(
+        HdTaskContext *ctx) const;
 
     HdRenderPassSharedPtr _renderPass;
     HdStRenderPassStateSharedPtr _renderPassState;

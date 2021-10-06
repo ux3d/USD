@@ -56,13 +56,9 @@ UsdLuxLight::Get(const UsdStagePtr &stage, const SdfPath &path)
 
 
 /* virtual */
-UsdSchemaKind UsdLuxLight::_GetSchemaKind() const {
+UsdSchemaKind UsdLuxLight::_GetSchemaKind() const
+{
     return UsdLuxLight::schemaKind;
-}
-
-/* virtual */
-UsdSchemaKind UsdLuxLight::_GetSchemaType() const {
-    return UsdLuxLight::schemaType;
 }
 
 /* static */
@@ -299,29 +295,31 @@ class UsdLuxLight_ConnectableAPIBehavior : public UsdShadeConnectableAPIBehavior
     bool
     CanConnectInputToSource(const UsdShadeInput &input,
                             const UsdAttribute &source,
-                            std::string *reason) override
-    {     
-        // Check the base class CanConnect first.
-        if (!UsdShadeConnectableAPIBehavior::CanConnectInputToSource(
-            input, source, reason)) {
-            return false;
-        }
+                            std::string *reason) const override
+    {
+        return _CanConnectInputToSource(input, source, reason, 
+                ConnectableNodeTypes::DerivedContainerNodes);
+    }
 
-        // Only allow inputs to connect to sources whose path
-        // contains the light's path as a prefix (i.e. encapsulation)
-        const SdfPath sourcePrimPath = source.GetPrim().GetPath();
-        const SdfPath inputPrimPath = input.GetPrim().GetPath();
-        if (!sourcePrimPath.HasPrefix(inputPrimPath)) {
-            if (reason) {
-                *reason = TfStringPrintf(
-                    "Proposed source <%s> of input '%s' on light at path <%s> "
-                    "must be a descendant of the light.",
-                    sourcePrimPath.GetText(), input.GetFullName().GetText(), 
-                    inputPrimPath.GetText());
-            }
-            return false;
-        }
+    bool
+    CanConnectOutputToSource(const UsdShadeOutput &output,
+                             const UsdAttribute &source,
+                             std::string *reason) const override
+    {
+        return _CanConnectOutputToSource(output, source, reason,
+                ConnectableNodeTypes::DerivedContainerNodes);
+    }
+
+    bool 
+    IsContainer() const override
+    {
         return true;
+    }
+
+    bool
+    RequiresEncapsulation() const override
+    {
+        return false;
     }
 };
 
@@ -358,9 +356,9 @@ UsdLuxLight::GetOutput(const TfToken &name) const
 }
 
 std::vector<UsdShadeOutput>
-UsdLuxLight::GetOutputs() const
+UsdLuxLight::GetOutputs(bool onlyAuthored) const
 {
-    return UsdShadeConnectableAPI(GetPrim()).GetOutputs();
+    return UsdShadeConnectableAPI(GetPrim()).GetOutputs(onlyAuthored);
 }
 
 UsdShadeInput
@@ -377,9 +375,9 @@ UsdLuxLight::GetInput(const TfToken &name) const
 }
 
 std::vector<UsdShadeInput>
-UsdLuxLight::GetInputs() const
+UsdLuxLight::GetInputs(bool onlyAuthored) const
 {
-    return UsdShadeConnectableAPI(GetPrim()).GetInputs();
+    return UsdShadeConnectableAPI(GetPrim()).GetInputs(onlyAuthored);
 }
 
 GfVec3f

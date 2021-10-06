@@ -23,7 +23,9 @@
 //
 
 #include "pxr/imaging/hdSt/extComputation.h"
+#include "pxr/imaging/hdSt/primUtils.h"
 #include "pxr/imaging/hdSt/resourceRegistry.h"
+#include "pxr/imaging/hdSt/renderParam.h"
 #include "pxr/imaging/hd/extComputationContext.h"
 #include "pxr/imaging/hd/compExtCompInputSource.h"
 #include "pxr/imaging/hd/perfLog.h"
@@ -39,6 +41,8 @@ HdStExtComputation::HdStExtComputation(SdfPath const &id)
  , _inputRange()
 {
 }
+
+HdStExtComputation::~HdStExtComputation() = default;
 
 //
 // De-duplicating and sharing of ExtComputation data.
@@ -120,8 +124,8 @@ HdStExtComputation::Sync(HdSceneDelegate *sceneDelegate,
                                                 GetId(), inputName);
         size_t arraySize =
             inputValue.IsArrayValued() ? inputValue.GetArraySize() : 1;
-        HdBufferSourceSharedPtr inputSource = HdBufferSourceSharedPtr(
-                    new HdVtBufferSource(inputName, inputValue, arraySize));
+        HdBufferSourceSharedPtr inputSource = std::make_shared<HdVtBufferSource>
+            (inputName, inputValue, arraySize);
         if (inputSource->IsValid()) {
             inputs.push_back(inputSource);
         } else {
@@ -208,11 +212,18 @@ HdStExtComputation::Sync(HdSceneDelegate *sceneDelegate,
 
         if (prevRange && (prevRange != _inputRange)) {
             // Make sure that we also release any stale input range data
-            renderIndex.GetChangeTracker().SetGarbageCollectionNeeded();
+            HdStMarkGarbageCollectionNeeded(renderParam);
         }
     }
 
     *dirtyBits &= ~DirtySceneInput;
+}
+
+void
+HdStExtComputation::Finalize(HdRenderParam *renderParam)
+{
+    // Release input range data.
+    HdStMarkGarbageCollectionNeeded(renderParam);
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

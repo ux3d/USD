@@ -75,13 +75,9 @@ UsdLuxLightFilter::Define(
 }
 
 /* virtual */
-UsdSchemaKind UsdLuxLightFilter::_GetSchemaKind() const {
+UsdSchemaKind UsdLuxLightFilter::_GetSchemaKind() const
+{
     return UsdLuxLightFilter::schemaKind;
-}
-
-/* virtual */
-UsdSchemaKind UsdLuxLightFilter::_GetSchemaType() const {
-    return UsdLuxLightFilter::schemaType;
 }
 
 /* static */
@@ -159,30 +155,37 @@ class UsdLuxLightFilter_ConnectableAPIBehavior :
     bool
     CanConnectInputToSource(const UsdShadeInput &input,
                             const UsdAttribute &source,
-                            std::string *reason) override
-    {     
-        // Check the base class CanConnect first.
-        if (!UsdShadeConnectableAPIBehavior::CanConnectInputToSource(
-            input, source, reason)) {
-            return false;
-        }
+                            std::string *reason) const override
+    {   
+        return _CanConnectInputToSource(input, source, reason, 
+                ConnectableNodeTypes::DerivedContainerNodes);
+    }
 
-        // Only allow inputs to connect to sources whose path
-        // contains the light's path as a prefix (i.e. encapsulation)
-        const SdfPath sourcePrimPath = source.GetPrim().GetPath();
-        const SdfPath inputPrimPath = input.GetPrim().GetPath();
-        if (!sourcePrimPath.HasPrefix(inputPrimPath)) {
-            if (reason) {
-                *reason = TfStringPrintf(
-                    "Proposed source <%s> of input '%s' on light filter at "
-                    "path <%s> must be a descendant of the light filter.",
-                    sourcePrimPath.GetText(), input.GetFullName().GetText(), 
-                    inputPrimPath.GetText());
-            }
-            return false;
-        }
+    bool 
+    IsContainer() const override
+    {
         return true;
     }
+
+    // We expect to make light filters be connected across multiple light
+    // scopes, hence ignoring encapsulation rules.
+    bool 
+    RequiresEncapsulation() const override
+    {
+        return false;
+    }
+
+    // Note that LightFilter's outputs are not connectable (different from
+    // UsdShadeNodeGraph default behavior) as there are no known use-case for 
+    // these right now.
+    bool
+    CanConnectOutputToSource(const UsdShadeOutput &output,
+                             const UsdAttribute &source,
+                             std::string *reason) const override
+    {
+        return false;
+    }
+
 };
 
 
@@ -219,9 +222,9 @@ UsdLuxLightFilter::GetOutput(const TfToken &name) const
 }
 
 std::vector<UsdShadeOutput>
-UsdLuxLightFilter::GetOutputs() const
+UsdLuxLightFilter::GetOutputs(bool onlyAuthored) const
 {
-    return UsdShadeConnectableAPI(GetPrim()).GetOutputs();
+    return UsdShadeConnectableAPI(GetPrim()).GetOutputs(onlyAuthored);
 }
 
 UsdShadeInput
@@ -238,9 +241,9 @@ UsdLuxLightFilter::GetInput(const TfToken &name) const
 }
 
 std::vector<UsdShadeInput>
-UsdLuxLightFilter::GetInputs() const
+UsdLuxLightFilter::GetInputs(bool onlyAuthored) const
 {
-    return UsdShadeConnectableAPI(GetPrim()).GetInputs();
+    return UsdShadeConnectableAPI(GetPrim()).GetInputs(onlyAuthored);
 }
 
 UsdCollectionAPI

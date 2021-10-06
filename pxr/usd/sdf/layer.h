@@ -301,10 +301,6 @@ public:
     /// \name File I/O
     /// @{
 
-    /// Converts \e layerPath to a file system path.
-    SDF_API
-    static std::string ComputeRealPath(const std::string &layerPath);
-
     /// Returns \c true if successful, \c false if an error occurred.
     /// Returns \c false if the layer has no remembered file name or the 
     /// layer type cannot be saved. The layer will not be overwritten if the 
@@ -529,11 +525,23 @@ public:
     SDF_API
     const VtValue& GetAssetInfo() const;
 
-    /// Make the given \p relativePath absolute using the identifier of this
-    /// layer.  If this layer does not have an identifier, or if the layer
-    /// identifier is itself relative, \p relativePath is returned unmodified.
+    /// Returns the path to the asset specified by \p assetPath using this layer
+    /// to anchor the path if necessary. Returns \p assetPath if it's empty or
+    /// an anonymous layer identifier.
+    ///
+    /// This method can be used on asset paths that are authored in this layer
+    /// to create new asset paths that can be copied to other layers.  These new
+    /// asset paths should refer to the same assets as the original asset
+    /// paths. For example, if the underlying ArResolver is filesystem-based and
+    /// \p assetPath is a relative filesystem path, this method might return the
+    /// absolute filesystem path using this layer's location as the anchor.
+    ///
+    /// The returned path should in general not be assumed to be an absolute
+    /// filesystem path or any other specific form. It is "absolute" in that it
+    /// should resolve to the same asset regardless of what layer it's authored
+    /// in.
     SDF_API
-    std::string ComputeAbsolutePath(const std::string &relativePath);
+    std::string ComputeAbsolutePath(const std::string& assetPath) const;
 
     /// @}
 
@@ -548,8 +556,8 @@ public:
     ///
     /// @{
 
-    /// Return the specifiers for \a path. This returns default constructed
-    /// specifiers if no spec exists at \a path.
+    /// Return the spec type for \a path. This returns SdfSpecTypeUnknown if no
+    /// spec exists at \a path.
     SDF_API
     SdfSpecType GetSpecType(const SdfPath& path) const;
 
@@ -1123,6 +1131,10 @@ public:
     ///
     /// Edits through the proxy changes the sublayers.  If this layer does
     /// not have any sublayers the proxy is empty.
+    ///
+    /// Sub-layer paths are asset paths, and thus must contain valid asset path
+    /// characters (UTF-8 without C0 and C1 controls).  See SdfAssetPath for
+    /// more details.
     SDF_API
     SdfSubLayerProxy GetSubLayerPaths() const;
 
@@ -1500,6 +1512,17 @@ private:
         const _FindOrOpenLayerInfo& info,
         bool metadataOnly);
 
+    // Helper function for finding a layer with \p identifier and \p args.
+    // \p lock must be unlocked initially and will be locked by this
+    // function when needed. See docs for \p retryAsWriter argument on
+    // _TryToFindLayer for details on the final state of the lock when
+    // this function returns.
+    template <class ScopedLock>
+    static SdfLayerRefPtr
+    _Find(const std::string &identifier,
+          const FileFormatArguments &args,
+          ScopedLock &lock, bool retryAsWriter);
+
     // Helper function to try to find the layer with \p identifier and
     // pre-resolved path \p resolvedPath in the registry.  Caller must hold
     // registry \p lock for reading.  If \p retryAsWriter is false, lock is
@@ -1574,6 +1597,33 @@ private:
                          const TfToken &fieldName,
                          SdfSpecType specType = SdfSpecTypeUnknown) const;
 
+    // Return the field definition for \p fieldName if \p fieldName is a
+    // required field for \p specType subject to \p schema.
+    static inline SdfSchema::FieldDefinition const *
+    _GetRequiredFieldDef(const SdfSchemaBase &schema,
+                         const TfToken &fieldName,
+                         SdfSpecType specType);
+
+    // Helper to list all fields on \p data at \p path subject to \p schema.
+    static std::vector<TfToken>
+    _ListFields(SdfSchemaBase const &schema,
+                SdfAbstractData const &data, const SdfPath& path);
+
+    // Helper for HasField for \p path in \p data subject to \p schema.
+    static inline bool
+    _HasField(const SdfSchemaBase &schema,
+              const SdfAbstractData &data,
+              const SdfPath& path,
+              const TfToken& fieldName,
+              VtValue *value);
+
+    // Helper to get a field value for \p path in \p data subject to \p schema.
+    static inline VtValue
+    _GetField(const SdfSchemaBase &schema,
+              const SdfAbstractData &data,
+              const SdfPath& path,
+              const TfToken& fieldName);
+    
     // Set a value.
     template <class T>
     void _SetValue(const TfToken& key, T value);
@@ -1612,9 +1662,15 @@ private:
     // inverses or emit change notification.
     void _SwapData(SdfAbstractDataRefPtr &data);
 
-    // Set _data to match data, calling other primitive setter methods
-    // to provide fine-grained inverses and notification.
-    void _SetData(const SdfAbstractDataPtr &data);
+    // Set _data to match data, calling other primitive setter methods to
+    // provide fine-grained inverses and notification.  If \p data might adhere
+    // to a different schema than this layer's, pass a pointer to it as \p
+    // newDataSchema.  In this case, check to see if fields from \p data are
+    // known to this layer's schema, and if not, omit them and issue a TfError
+    // with SdfAuthoringErrorUnrecognizedFields, but continue to set all other
+    // known fields.
+    void _SetData(const SdfAbstractDataPtr &newData,
+                  const SdfSchemaBase *newDataSchema=nullptr);
 
     // Returns const handle to _data.
     SdfAbstractDataConstPtr _GetData() const;

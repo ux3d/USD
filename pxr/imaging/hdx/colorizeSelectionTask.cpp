@@ -23,21 +23,15 @@
 //
 #include "pxr/imaging/hdx/colorizeSelectionTask.h"
 
-#include "pxr/imaging/hd/perfLog.h"
 #include "pxr/imaging/hd/renderBuffer.h"
-#include "pxr/imaging/hd/tokens.h"
 
+#include "pxr/imaging/hdx/fullscreenShader.h"
 #include "pxr/imaging/hdx/hgiConversions.h"
 #include "pxr/imaging/hdx/package.h"
 #include "pxr/imaging/hdx/selectionTracker.h"
 #include "pxr/imaging/hdx/tokens.h"
 
-#include "pxr/imaging/hgi/blitCmds.h"
-#include "pxr/imaging/hgi/blitCmdsOps.h"
 #include "pxr/imaging/hgi/hgi.h"
-#include "pxr/imaging/hgi/tokens.h"
-
-#include "pxr/base/gf/vec2f.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -101,11 +95,6 @@ HdxColorizeSelectionTask::_Sync(HdSceneDelegate* delegate,
         _GetTaskParams(delegate, &_params);
     }
     *dirtyBits = HdChangeTracker::Clean;
-
-    HdxSelectionTrackerSharedPtr sel;
-    if (_GetTaskContextData(ctx, HdxTokens->selectionState, &sel)) {
-        sel->UpdateSelection(&(delegate->GetRenderIndex()));
-    }
 }
 
 void
@@ -114,6 +103,11 @@ HdxColorizeSelectionTask::Prepare(HdTaskContext* ctx,
 {
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
+
+    HdxSelectionTrackerSharedPtr sel;
+    if (_GetTaskContextData(ctx, HdxTokens->selectionState, &sel)) {
+        sel->UpdateSelection(renderIndex);
+    }
 
     _primId = static_cast<HdRenderBuffer*>(
         renderIndex->GetBprim(HdPrimTypeTokens->renderBuffer,
@@ -124,9 +118,6 @@ HdxColorizeSelectionTask::Prepare(HdTaskContext* ctx,
     _elementId = static_cast<HdRenderBuffer*>(
         renderIndex->GetBprim(HdPrimTypeTokens->renderBuffer,
                               _params.elementIdBufferPath));
-
-    HdxSelectionTrackerSharedPtr sel;
-    _GetTaskContextData(ctx, HdxTokens->selectionState, &sel);
 
     if (sel && sel->GetVersion() != _lastVersion) {
         _lastVersion = sel->GetVersion();
@@ -210,8 +201,6 @@ HdxColorizeSelectionTask::Execute(HdTaskContext* ctx)
     HgiShaderFunctionDesc fragDesc;
     fragDesc.debugName = _tokens->outlineFrag.GetString();
     fragDesc.shaderStage = HgiShaderStageFragment;
-    HgiShaderFunctionAddStageInput(
-        &fragDesc, "hd_Position", "vec4", "position");
     HgiShaderFunctionAddStageInput(
         &fragDesc, "uvOut", "vec2");
     HgiShaderFunctionAddTexture(

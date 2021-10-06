@@ -237,12 +237,9 @@ WRAP_CUSTOM {
         &UsdShadeConnectableAPI::HasConnectableAPI;
 
     _class
-        .def(init<UsdShadeShader const &>(arg("shader")))
-        .def(init<UsdShadeNodeGraph const&>(arg("nodeGraph")))
-
-        .def("IsShader", &UsdShadeConnectableAPI::IsShader)
-        .def("IsNodeGraph", &UsdShadeConnectableAPI::IsNodeGraph)
         .def("IsContainer", &UsdShadeConnectableAPI::IsContainer)
+        .def("RequiresEncapsulation", 
+                &UsdShadeConnectableAPI::RequiresEncapsulation)
 
         .def("CanConnect", CanConnect_Input,
             (arg("input"), arg("source")))
@@ -313,18 +310,17 @@ WRAP_CUSTOM {
              (arg("name"), arg("type")))
         .def("GetOutput", &UsdShadeConnectableAPI::GetOutput, arg("name"))
         .def("GetOutputs", &UsdShadeConnectableAPI::GetOutputs,
+             (arg("onlyAuthored") = true),
              return_value_policy<TfPySequenceToList>())
 
         .def("CreateInput", &UsdShadeConnectableAPI::CreateInput,
              (arg("name"), arg("type")))
         .def("GetInput", &UsdShadeConnectableAPI::GetInput, arg("name"))
         .def("GetInputs", &UsdShadeConnectableAPI::GetInputs,
+             (arg("onlyAuthored") = true),
              return_value_policy<TfPySequenceToList>())
 
     ;
-
-    implicitly_convertible<UsdShadeNodeGraph, UsdShadeConnectableAPI>();
-    implicitly_convertible<UsdShadeShader, UsdShadeConnectableAPI>();
 
     class_<ConnectionSourceInfo>("ConnectionSourceInfo")
         .def(init<UsdShadeConnectableAPI const &,

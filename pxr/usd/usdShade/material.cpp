@@ -75,13 +75,9 @@ UsdShadeMaterial::Define(
 }
 
 /* virtual */
-UsdSchemaKind UsdShadeMaterial::_GetSchemaKind() const {
+UsdSchemaKind UsdShadeMaterial::_GetSchemaKind() const
+{
     return UsdShadeMaterial::schemaKind;
-}
-
-/* virtual */
-UsdSchemaKind UsdShadeMaterial::_GetSchemaType() const {
-    return UsdShadeMaterial::schemaType;
 }
 
 /* static */
@@ -422,9 +418,9 @@ UsdShadeMaterial::GetBaseMaterialPath() const
     if (parentMaterialPath != SdfPath::EmptyPath()) {
         UsdPrim p = GetPrim().GetStage()->GetPrimAtPath(parentMaterialPath);
         if (p.IsInstanceProxy()) {
-            // this looks like an instance but it's acting as the master path.
-            // Return the master path
-            parentMaterialPath = p.GetPrimInMaster().GetPath();
+            // this looks like an instance but it's acting as the prototype path
+            // Return the prototype path
+            parentMaterialPath = p.GetPrimInPrototype().GetPath();
         }
     }
     return parentMaterialPath;
@@ -511,32 +507,57 @@ _GetOutputName(const TfToken &baseName, const TfToken &renderContext)
 
 UsdShadeAttributeVector
 UsdShadeMaterial::_ComputeNamedOutputSources(
-        const TfToken &baseName,
-        const TfToken &renderContext) const
+    const TfToken &baseName,
+    const TfTokenVector &contextVector) const
 {
-    const TfToken outputName = _GetOutputName(baseName, renderContext);
-    UsdShadeOutput output = GetOutput(outputName);
-    if (output) {
-        if (renderContext == UsdShadeTokens->universalRenderContext && 
-            !output.GetAttr().IsAuthored()) {
-            return {};
-        }
+    TRACE_FUNCTION();
+    bool universalRenderContextComputed = false;
+    for (TfToken const& renderContext : contextVector) {
+        
+        universalRenderContextComputed |= 
+            (renderContext == UsdShadeTokens->universalRenderContext);
+        
+        const TfToken outputName = _GetOutputName(baseName, renderContext);
+        UsdShadeOutput output = GetOutput(outputName);
+        if (output) {
+            if (renderContext == UsdShadeTokens->universalRenderContext && 
+                !output.GetAttr().IsAuthored()) {
+                return {};
+            }
 
-        UsdShadeAttributeVector valueAttrs =
-            UsdShadeUtils::GetValueProducingAttributes(output);
-        // If we didn't find any connected attributes we will check the
-        // universal context below
-        if (!valueAttrs.empty()) {
-            return valueAttrs;
+            // See if this material output is connected to an upstream output
+            // of a shader.
+            // Note, by setting shaderOutputsOnly=true we do not accept upstream
+            // constant values, which can't be used by a renderer as a terminal
+            // node of the network. This also makes this call quite a bit cheaper.
+            UsdShadeAttributeVector valueAttrs =
+                UsdShadeUtils::GetValueProducingAttributes(
+                    output, /*shaderOutputsOnly*/true);
+
+            // XXX To remove this limitation we need to change the APIs for the
+            //     Compute*Source calls to forward multiple result attributes
+            if (valueAttrs.size() > 1) {
+                TF_WARN("Multiple connected sources for output %s:%s on material"
+                        " %s. Only the first will be consider as a terminal.",
+                        renderContext.GetText(), baseName.GetText(),
+                        GetPath().GetText());
+            }
+            // If we didn't find any connected attributes continue checking the 
+            // renderContexts, then as a fallback we will check the universal
+            // context below
+            if (!valueAttrs.empty()) {
+                return valueAttrs;
+            }
         }
     }
 
-    if (renderContext != UsdShadeTokens->universalRenderContext) {
+    if (!universalRenderContextComputed) {
         const TfToken universalOutputName = _GetOutputName(
                 baseName, UsdShadeTokens->universalRenderContext);
         UsdShadeOutput universalOutput = GetOutput(universalOutputName);
         if (TF_VERIFY(universalOutput)) {
-            return UsdShadeUtils::GetValueProducingAttributes(universalOutput);
+            return UsdShadeUtils::GetValueProducingAttributes(
+                universalOutput, /*shaderOutputsOnly*/true);
         }
     }
 
@@ -546,24 +567,15 @@ UsdShadeMaterial::_ComputeNamedOutputSources(
 UsdShadeShader 
 UsdShadeMaterial::_ComputeNamedOutputShader(
     const TfToken &baseName,
-    const TfToken &renderContext,
+    const TfTokenVector &contextVector,
     TfToken *sourceName,
     UsdShadeAttributeType *sourceType) const
 {
     UsdShadeAttributeVector valueAttrs =
-        _ComputeNamedOutputSources(baseName, renderContext);
+        _ComputeNamedOutputSources(baseName, contextVector);
 
     if (valueAttrs.empty()) {
         return UsdShadeShader();
-    }
-
-    // XXX To remove this limitation we need to change the APIs for the
-    //     Compute*Source calls to forward multiple result attributes
-    if (valueAttrs.size() > 1) {
-        TF_WARN("Multiple connected sources for output %s:%s on material %s. "
-                "Only the first will be consider as a terminal.",
-                renderContext.GetText(), baseName.GetText(),
-                GetPath().GetText());
     }
 
     if (sourceName || sourceType) {
@@ -636,8 +648,20 @@ UsdShadeMaterial::ComputeSurfaceSource(
     TfToken *sourceName, 
     UsdShadeAttributeType *sourceType) const
 {
+    TRACE_FUNCTION();
     return _ComputeNamedOutputShader(UsdShadeTokens->surface, 
-            renderContext, sourceName, sourceType);
+            {renderContext}, sourceName, sourceType);
+}
+
+UsdShadeShader 
+UsdShadeMaterial::ComputeSurfaceSource(
+    const TfTokenVector &contextVector,
+    TfToken *sourceName, 
+    UsdShadeAttributeType *sourceType) const
+{
+    TRACE_FUNCTION();
+    return _ComputeNamedOutputShader(UsdShadeTokens->surface, 
+            contextVector, sourceName, sourceType);
 }
 
 UsdShadeOutput 
@@ -665,8 +689,20 @@ UsdShadeMaterial::ComputeDisplacementSource(
     TfToken *sourceName, 
     UsdShadeAttributeType *sourceType) const
 {
+    TRACE_FUNCTION();
     return _ComputeNamedOutputShader(UsdShadeTokens->displacement, 
-            renderContext, sourceName, sourceType);
+            {renderContext}, sourceName, sourceType);
+}
+
+UsdShadeShader 
+UsdShadeMaterial::ComputeDisplacementSource(
+    const TfTokenVector &contextVector,
+    TfToken *sourceName, 
+    UsdShadeAttributeType *sourceType) const
+{
+    TRACE_FUNCTION();
+    return _ComputeNamedOutputShader(UsdShadeTokens->displacement, 
+            contextVector, sourceName, sourceType);
 }
 
 UsdShadeOutput 
@@ -694,26 +730,44 @@ UsdShadeMaterial::ComputeVolumeSource(
     TfToken *sourceName, 
     UsdShadeAttributeType *sourceType) const
 {
-    return _ComputeNamedOutputShader(UsdShadeTokens->volume, renderContext, 
+    TRACE_FUNCTION();
+    return _ComputeNamedOutputShader(UsdShadeTokens->volume, {renderContext}, 
             sourceName, sourceType);
 }
 
-class UsdShadeMaterial_ConnectableAPIBehavior : public UsdShadeNodeGraph::ConnectableAPIBehavior
+UsdShadeShader 
+UsdShadeMaterial::ComputeVolumeSource(
+    const TfTokenVector &contextVector,
+    TfToken *sourceName, 
+    UsdShadeAttributeType *sourceType) const
+{
+    TRACE_FUNCTION();
+    return _ComputeNamedOutputShader(UsdShadeTokens->volume, contextVector, 
+            sourceName, sourceType);
+}
+
+class UsdShadeMaterial_ConnectableAPIBehavior : 
+    public UsdShadeNodeGraph::ConnectableAPIBehavior
 {
     bool
     CanConnectInputToSource(const UsdShadeInput &input,
                             const UsdAttribute &source,
-                            std::string *reason) override
+                            std::string *reason) const override
     {
-        // TODO: In the future we will only allows connections whose path
-        // contains the Material's path as a prefix (i.e. encapsulation)
-        // Note that UsdLuxLight and UsdLuxLightFilter already implement
-        // this behavior so this should be reimplemented as a shared behavior
-        // that can be used by any connectables that need it.
-        return true;
+        return _CanConnectInputToSource(input, source, reason, 
+                ConnectableNodeTypes::DerivedContainerNodes);
     }
 
-    bool IsContainer() const
+    bool
+    CanConnectOutputToSource(const UsdShadeOutput &output,
+                             const UsdAttribute &source,
+                             std::string *reason) const override
+    {
+        return _CanConnectOutputToSource(output, source, reason,
+                ConnectableAPIBehavior::DerivedContainerNodes);
+    }
+
+    bool IsContainer() const override
     {
         // Material does act as a namespace container for connected nodes
         return true;

@@ -48,6 +48,15 @@ class UsdShadeOutput;
 class UsdShadeConnectableAPIBehavior
 {
 public:
+
+    /// An enum describing the types of connectable nodes which will govern what
+    /// connectibility rule is invoked for these.
+    enum ConnectableNodeTypes
+    {
+        BasicNodes, // Shader, NodeGraph
+        DerivedContainerNodes, // Material, etc
+    };
+
     USDSHADE_API
     virtual ~UsdShadeConnectableAPIBehavior();
 
@@ -68,7 +77,7 @@ public:
     virtual bool
     CanConnectInputToSource(const UsdShadeInput &,
                             const UsdAttribute &,
-                            std::string *reason);
+                            std::string *reason) const;
 
     /// The prim owning the output is guaranteed to be of the type this
     /// behavior was registered with. The function must be thread-safe.
@@ -86,15 +95,48 @@ public:
     virtual bool
     CanConnectOutputToSource(const UsdShadeOutput &,
                              const UsdAttribute &,
-                             std::string *reason);
+                             std::string *reason) const;
 
-    /// The prim owning the output is guaranteed to be of the type this
-    /// behavior was registered with. The function must be thread-safe.
+    /// The function must be thread-safe.
     ///
     /// It should return true if the associated prim type is considered
     /// a "container" for connected nodes.
     USDSHADE_API
     virtual bool IsContainer() const;
+
+    /// The function must be thread-safe.
+    ///
+    /// Determines if the behavior should respect container encapsulation rules
+    /// (\ref UsdShadeConnectability), when evaluating CanConnectInputToSource 
+    /// or CanConnectOutputToSource. This should return true if the container 
+    /// encapsulation rules need to be respected, false otherwise. 
+    ///
+    /// \sa IsContainer()
+    /// 
+    USDSHADE_API
+    virtual bool RequiresEncapsulation() const;
+
+protected:
+    /// Helper function to separate and share special connectivity logic for 
+    /// specialized, NodeGraph-derived nodes, like Material (and other in other 
+    /// domains) that allow their inputs to be connected to an output of a 
+    /// source that they directly contain/encapsulate. The default behavior is 
+    /// for Shader Nodes or NodeGraphs which allow their input connections to 
+    /// output of a sibling source, both encapsulated by the same container 
+    /// node.
+    USDSHADE_API
+    bool _CanConnectInputToSource(const UsdShadeInput&, const UsdAttribute&,
+                                  std::string *reason, 
+                                  ConnectableNodeTypes nodeType = 
+                                    ConnectableNodeTypes::BasicNodes) const;
+
+    USDSHADE_API
+    bool _CanConnectOutputToSource(const UsdShadeOutput&, const UsdAttribute&,
+                                   std::string *reason,
+                                   ConnectableNodeTypes nodeType =
+                                     ConnectableNodeTypes::BasicNodes) const;
+
+    
 };
 
 /// Registers \p behavior to define connectability of attributes for \p PrimType.
