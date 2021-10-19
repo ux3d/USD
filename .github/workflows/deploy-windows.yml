@@ -23,6 +23,8 @@ jobs:
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
+    # Setup MSBuild
+    - uses: microsoft/setup-msbuild@v1.0.3
     # Intall NASM
     - uses: ilammy/setup-nasm@v1
     # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
