@@ -34,6 +34,11 @@ jobs:
     - name: Build USD
       run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../artifacts/usd
     
+    - name: Show Result
+      run: |
+            cd ../artifacts/usd
+            dir
+
     - name: Archive the release
       run: |
             cd ../artifacts
