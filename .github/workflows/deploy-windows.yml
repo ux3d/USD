@@ -34,10 +34,33 @@ jobs:
     - name: Build USD
       run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials ../artifacts/usd
     
+    - name: Remove build
+      uses: JesseTG/rm@v1.0.2
+      with:
+        path: ../artifacts/usd/build  
+
+    - name: Remove cmake
+      uses: JesseTG/rm@v1.0.2
+      with:
+        path: ../artifacts/usd/cmake
+
+    - name: Remove src
+      uses: JesseTG/rm@v1.0.2
+      with:
+        path: ../artifacts/usd/src    
+
+    - name: Remove pxrConfig.cmake
+      uses: JesseTG/rm@v1.0.2
+      with:
+        path: ../artifacts/usd/pxrConfig.cmake
+
     - name: Show Result
       run: |
-            cd ../artifacts/usd
-            dir
+            dir ../artifacts/usd/bin
+            dir ../artifacts/usd/include
+            dir ../artifacts/usd/lib
+            dir ../artifacts/usd/plugin
+            dir ../artifacts/usd/share
 
     - name: Archive the release
       run: |
