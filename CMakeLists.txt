@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.12)
 
+if(APPLE)
+	set(MACOSX_DEPLOYMENT_TARGET "10.14")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14" CACHE STRING "")
+endif()
+
 project(usd)
 
 if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
