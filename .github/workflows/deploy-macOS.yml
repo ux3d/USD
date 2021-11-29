@@ -33,7 +33,7 @@ jobs:
       run: |
             cd ../artifacts/usd
             echo "Create an archive containing the install files"
-            tar -zcf usd_macOS_amd64.tar.gz *
+            tar --posix -zcf usd_macOS_amd64.tar.gz *
             echo "Done"
             cd ..
             mv usd/usd_macOS_amd64.tar.gz .
