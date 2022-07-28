@@ -32,7 +32,7 @@ jobs:
 
     # Runs a set of commands using the runners shell
     - name: Build USD
-      run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials --no-python --no-tools ../artifacts/usd
+      run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials --no-python --no-tools --build-shared ../artifacts/usd
    
     - name: Show Result
       run: |
