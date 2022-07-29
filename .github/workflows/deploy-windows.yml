@@ -32,7 +32,7 @@ jobs:
 
     # Runs a set of commands using the runners shell
     - name: Build USD
-      run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials --no-python --no-tools --build-shared ../artifacts/usd --build-args "-DPXR_LIB_PREFIX=''"
+      run: python build_scripts/build_usd.py --no-examples --no-usdview  --no-tutorials --no-python --no-tools --build-shared ../artifacts/usd --build-args USD,"-DPXR_LIB_PREFIX=''"
    
     - name: Show Result
       run: |
