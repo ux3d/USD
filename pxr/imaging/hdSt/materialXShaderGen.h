@@ -49,6 +49,16 @@ public:
                            MaterialX::ElementPtr mxElement,
                            MaterialX::GenContext& mxContext) const override;
 
+    // Overriding this function to catch and adjust SurfaceNode code
+    void emitLine(const std::string& str, 
+                  MaterialX::ShaderStage& stage, 
+                  bool semicolon = true) const override;
+
+    // Helper to catch when we start/end emitting code for the SurfaceNode
+    void SetEmittingSurfaceNode(bool emittingSurfaceNode) {
+        _emittingSurfaceNode = emittingSurfaceNode;
+    }
+
 protected:
     void _EmitGlslfxShader(const MaterialX::ShaderGraph& mxGraph,
                            MaterialX::GenContext& mxContext,
@@ -90,6 +100,17 @@ private:
                                   MaterialX::ShaderStage& stage,
                                   bool assignValue = true) const override;
 
+    // This method was introduced in MaterialX 1.38.5 and replaced the
+    // emitInclude method. We add this method for older versions of MaterialX
+    // for backwards compatibility.
+#if MATERIALX_MAJOR_VERSION <= 1 &&  \
+    MATERIALX_MINOR_VERSION <= 38 && \
+    MATERIALX_BUILD_VERSION <= 4
+    void emitLibraryInclude(const MaterialX::FilePath& filename,
+                            MaterialX::GenContext& context,
+                            MaterialX::ShaderStage& stage) const;
+#endif
+
     // Store MaterialX and Hydra counterparts and other Hydra specific info
     // to generate an appropriate glslfx header and properly initialize 
     // MaterialX values.
@@ -97,6 +118,10 @@ private:
     MaterialX::StringMap _mxHdPrimvarMap;
     std::string _defaultTexcoordName;
     std::string _materialTag;
+    bool _bindlessTexturesEnabled;
+
+    // Helper to catch code for the SurfaceNode
+    bool _emittingSurfaceNode;
 };
 
 

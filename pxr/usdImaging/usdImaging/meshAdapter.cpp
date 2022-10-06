@@ -23,6 +23,7 @@
 //
 #include "pxr/usdImaging/usdImaging/meshAdapter.h"
 
+#include "pxr/usdImaging/usdImaging/dataSourceMesh.h"
 #include "pxr/usdImaging/usdImaging/debugCodes.h"
 #include "pxr/usdImaging/usdImaging/delegate.h"
 #include "pxr/usdImaging/usdImaging/indexProxy.h"
@@ -56,6 +57,36 @@ UsdImagingMeshAdapter::~UsdImagingMeshAdapter()
 {
 }
 
+TfTokenVector
+UsdImagingMeshAdapter::GetImagingSubprims()
+{
+    return { TfToken() };
+}
+
+TfToken
+UsdImagingMeshAdapter::GetImagingSubprimType(TfToken const& subprim)
+{
+    if (subprim.IsEmpty()) {
+        return HdPrimTypeTokens->mesh;
+    }
+    return TfToken();
+}
+
+HdContainerDataSourceHandle
+UsdImagingMeshAdapter::GetImagingSubprimData(
+        TfToken const& subprim,
+        UsdPrim const& prim,
+        const UsdImagingDataSourceStageGlobals &stageGlobals)
+{
+    if (subprim.IsEmpty()) {
+        return UsdImagingDataSourceMeshPrim::New(
+            prim.GetPath(),
+            prim,
+            stageGlobals);
+    }
+    return nullptr;
+}
+
 bool
 UsdImagingMeshAdapter::IsSupported(UsdImagingIndexProxy const* index) const
 {
@@ -84,6 +115,11 @@ UsdImagingMeshAdapter::Populate(UsdPrim const& prim,
                 index->GetMaterialAdapter(materialPrim);
             if (materialAdapter) {
                 materialAdapter->Populate(materialPrim, index, nullptr);
+                // We need to register a dependency on the material prim so
+                // that geometry is updated when the material is
+                // (specifically, DirtyMaterialId).
+                // XXX: Eventually, it would be great to push this into hydra.
+                index->AddDependency(cachePath, materialPrim);
             }
         }
     }

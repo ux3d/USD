@@ -7,6 +7,12 @@ if (NOT ${PXR_BUILD_GPU_SUPPORT})
     return()
 endif()
 
+if (WIN32)
+    # OpenVDB uses constants from <cmath> that aren't available on
+    # Windows unless this is defined.
+    add_definitions(-D_USE_MATH_DEFINES)
+endif()
+
 pxr_library(hioOpenVDB
     LIBRARIES
         ar
@@ -18,9 +24,10 @@ pxr_library(hioOpenVDB
         ${OPENVDB_LIBRARY}
 
     INCLUDE_DIRS
-        ${OPENVDB_INCLUDE_DIRS}
+        ${OPENVDB_INCLUDE_DIR}
 
     PUBLIC_CLASSES
+        utils
         vdbAssetInterface
 
     PUBLIC_HEADERS

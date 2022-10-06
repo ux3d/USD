@@ -23,12 +23,10 @@
 //
 #include <numeric> // for std::iota
 #include "hdPrman/mesh.h"
-#include "hdPrman/context.h"
+#include "hdPrman/renderParam.h"
 #include "hdPrman/coordSys.h"
 #include "hdPrman/instancer.h"
 #include "hdPrman/material.h"
-#include "hdPrman/renderParam.h"
-#include "hdPrman/renderPass.h"
 #include "hdPrman/rixStrings.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/matrix4f.h"
@@ -85,7 +83,7 @@ HdPrman_Mesh::GetInitialDirtyBitsMask() const
 }
 
 RtPrimVarList
-HdPrman_Mesh::_ConvertGeometry(HdPrman_Context *context,
+HdPrman_Mesh::_ConvertGeometry(HdPrman_RenderParam *renderParam,
                                 HdSceneDelegate *sceneDelegate,
                                 const SdfPath &id,
                                 RtUString *primType,
@@ -141,29 +139,7 @@ HdPrman_Mesh::_ConvertGeometry(HdPrman_Context *context,
     //
     // Point positions (P)
     //
-    HdTimeSampleArray<VtVec3fArray, HDPRMAN_MAX_TIME_SAMPLES> points;
-    {
-        HdTimeSampleArray<VtValue, HDPRMAN_MAX_TIME_SAMPLES> boxedPoints;
-        sceneDelegate->SamplePrimvar(id, HdTokens->points, &boxedPoints);
-        points.UnboxFrom(boxedPoints);
-    }
-
-    primvars.SetTimes(points.count, &points.times[0]);
-    for (size_t i=0; i < points.count; ++i) {
-        if (points.values[i].size() == npoints) {
-            primvars.SetPointDetail(
-                RixStr.k_P, 
-                (RtPoint3*) points.values[i].cdata(),
-                RtDetailType::k_vertex, 
-                i);
-        } else {
-            TF_WARN("<%s> primvar 'points' size (%zu) did not match "
-                    "expected (%zu)", 
-                    id.GetText(), 
-                    points.values[i].size(), 
-                    npoints);
-        }
-    }
+    HdPrman_ConvertPointsPrimvar(sceneDelegate, id, primvars, npoints);
 
     // Topology.
     primvars.SetIntegerDetail(RixStr.k_Ri_nvertices, nverts.cdata(),
@@ -230,10 +206,18 @@ HdPrman_Mesh::_ConvertGeometry(HdPrman_Context *context,
         VtIntArray creaseIndices = osdTags.GetCreaseIndices();
         VtFloatArray creaseWeights = osdTags.GetCreaseWeights();
         if (!creaseIndices.empty()) {
+            const bool weightPerCrease = 
+                creaseWeights.size() == creaseLengths.size();
             for (int creaseLength: creaseLengths) {
                 tagNames.push_back(RixStr.k_crease);
                 tagArgCounts.push_back(creaseLength); // num int args
-                tagArgCounts.push_back(1); // num float args
+                if (weightPerCrease) {
+                    // one weight for each crease
+                    tagArgCounts.push_back(1); // num float args
+                } else {
+                    // one weight for each crease edge
+                    tagArgCounts.push_back(creaseLength-1); // num float args
+                }
                 tagArgCounts.push_back(0); // num str args
             }
             tagIntArgs.insert(tagIntArgs.end(),

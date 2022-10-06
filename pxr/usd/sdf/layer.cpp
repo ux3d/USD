@@ -66,6 +66,7 @@
 #include "pxr/base/tf/scopeDescription.h"
 #include "pxr/base/tf/staticData.h"
 #include "pxr/base/tf/stackTrace.h"
+#include "pxr/base/work/withScopedParallelism.h"
 
 #include <tbb/queuing_rw_mutex.h>
 
@@ -133,6 +134,7 @@ SdfLayer::SdfLayer(
     : _self(this)
     , _fileFormat(fileFormat)
     , _fileFormatArgs(args)
+    , _schema(fileFormat->GetSchema())
     , _idRegistry(SdfLayerHandle(this))
     , _data(fileFormat->InitData(args))
     , _stateDelegate(SdfSimpleLayerStateDelegate::New())
@@ -249,11 +251,13 @@ SdfLayer::_WaitForInitializationAndCheckIfSuccessful()
     // being initialized, this will be false, blocking progress until
     // initialization completes.
     while (!_initializationComplete) {
+        // XXX: Disabled for now due to intermittent crashes.
+        //_initDispatcher.Wait();
         std::this_thread::yield();
     }
 
     // For various reasons, initialization may have failed.
-    // For example, the menva parser may have hit a syntax error,
+    // For example, the sdf text format parser may have hit a syntax error,
     // or transferring content from a source layer may have failed.
     // In this case _initializationWasSuccessful will be set to false.
     // The callers of this method are responsible for checking the result
@@ -280,19 +284,6 @@ _GetExternalAssetModificationTimes(const SdfLayer& layer)
     return result;
 }
 
-#if AR_VERSION == 1
-static bool
-_ModificationTimesEqual(const VtValue& t1, const VtValue& t2)
-{
-    return t1 == t2;
-}
-
-static bool
-_ModificationTimesEqual(const VtDictionary& t1, const VtDictionary& t2)
-{
-    return t1 == t2;
-}
-#else
 static bool
 _ModificationTimesEqual(const VtValue& v1, const VtValue& v2)
 {
@@ -322,7 +313,6 @@ _ModificationTimesEqual(const VtDictionary& t1, const VtDictionary& t2)
     
     return true;
 }
-#endif
 
 SdfLayerRefPtr
 SdfLayer::CreateAnonymous(
@@ -445,17 +435,6 @@ SdfLayer::_CreateNew(
     ArResolver& resolver = ArGetResolver();
 
     ArAssetInfo assetInfo;
-
-#if AR_VERSION == 1
-    // When creating a new layer, assume that relative identifiers are
-    // relative to the current working directory.
-    const bool isRelativePath = resolver.IsRelativePath(identifier);
-    const string absIdentifier = 
-        isRelativePath ? TfAbsPath(identifier) : identifier;
-
-    // Direct newly created layers to a local path.
-    const string localPath = resolver.ComputeLocalPath(absIdentifier);
-#else
     string absIdentifier, localPath;
     {
         TfErrorMark m;
@@ -473,7 +452,6 @@ SdfLayer::_CreateNew(
             m.Clear();
         }
     }
-#endif
 
     if (localPath.empty()) {
         TF_CODING_ERROR(
@@ -572,15 +550,8 @@ SdfLayer::New(
 
     tbb::queuing_rw_mutex::scoped_lock lock(_GetLayerRegistryMutex());
 
-#if AR_VERSION == 1
-    // When creating a new layer, assume that relative identifiers are
-    // relative to the current working directory.
-    const string absIdentifier = ArGetResolver().IsRelativePath(identifier) ?
-        TfAbsPath(identifier) : identifier;
-#else
     const string absIdentifier = 
         ArGetResolver().CreateIdentifierForNewAsset(identifier);
-#endif
 
     SdfLayerRefPtr layer = _CreateNewWithFormat(
         fileFormat, absIdentifier, std::string(), ArAssetInfo(), args);
@@ -715,12 +686,9 @@ SdfLayer::_ComputeInfoToFindOrOpenLayer(
     }
 
     const bool isAnonymous = IsAnonymousLayerIdentifier(layerPath);
-
-#if AR_VERSION > 1
     if (!isAnonymous) {
         layerPath = ArGetResolver().CreateIdentifier(layerPath);
     }
-#endif
 
     // If we're trying to open an anonymous layer, do not try to compute the
     // real path for it.
@@ -820,6 +788,9 @@ SdfLayer::FindOrOpen(const string &identifier,
     // instance), we'll deadlock.
     TF_PY_ALLOW_THREADS_IN_SCOPE();
 
+    // Isolate.
+    return WorkWithScopedParallelism([&]() -> SdfLayerRefPtr {
+    
     _FindOrOpenLayerInfo layerInfo;
     if (!_ComputeInfoToFindOrOpenLayer(identifier, args, &layerInfo,
                                        /* computeAssetInfo = */ true)) {
@@ -861,6 +832,7 @@ SdfLayer::FindOrOpen(const string &identifier,
     // Otherwise we create the layer and insert it into the registry.
     return _OpenLayerAndUnlockRegistry(lock, layerInfo,
                                        /* metadataOnly */ false);
+    });
 }
 
 /* static */
@@ -918,7 +890,7 @@ SdfLayer::OpenAsAnonymous(
                 layerInfo.fileFormat, Sdf_GetAnonLayerIdentifierTemplate(tag),
                 string());
         // From this point, we must call _FinishInitialization() on
-        // either success or failure in order to unblock other
+        // either success or failure in order to unblock others
         // threads waiting for initialization to finish.
     }
 
@@ -937,7 +909,7 @@ SdfLayer::OpenAsAnonymous(
 const SdfSchemaBase& 
 SdfLayer::GetSchema() const
 {
-    return GetFileFormat()->GetSchema();
+    return _schema;
 }
 
 SdfLayer::_ReloadResult
@@ -1030,14 +1002,6 @@ SdfLayer::_Reload(bool force)
 
         VtValue timestamp(ArGetResolver().GetModificationTimestamp(
             layerPath, resolvedPath));
-#if AR_VERSION == 1
-        if (timestamp.IsEmpty()) {
-            TF_CODING_ERROR(
-                "Unable to get modification time for '%s (%s)'",
-                GetIdentifier().c_str(), resolvedPath.GetPathString().c_str());
-            return _ReloadFailed;
-        }
-#endif
 
         // Ask the current external asset dependency state.
         VtDictionary externalAssetTimestamps = 
@@ -1131,22 +1095,6 @@ SdfLayer::_Read(
         TfStringify(metadataOnly).c_str());
 
     SdfFileFormatConstPtr format = GetFileFormat();
-#if AR_VERSION == 1
-    if (format->LayersAreFileBased()) {
-        if (!ArGetResolver().FetchToLocalResolvedPath(
-                identifier, resolvedPath)) {
-            TF_DEBUG(SDF_LAYER).Msg(
-                "SdfLayer::_Read - unable to fetch '%s' to "
-                "local path '%s'\n",
-                identifier.c_str(), resolvedPath.c_str());
-            return false;
-        }
-
-        TF_DEBUG(SDF_LAYER).Msg(
-            "SdfLayer::_Read - fetched '%s' to local path '%s'\n",
-            identifier.c_str(), resolvedPath.c_str());
-    }
-#endif
     return format->Read(this, resolvedPath, metadataOnly);
 }
 
@@ -1530,7 +1478,7 @@ SdfLayer::_GetValue(const TfToken& key) const
 {
     VtValue value;
     if (!HasField(SdfPath::AbsoluteRootPath(), key, &value)) {
-        return GetSchema().GetFallback(key).Get<T>();
+        return _schema.GetFallback(key).Get<T>();
     }
     
     return value.Get<T>();
@@ -2497,19 +2445,12 @@ SdfLayer::SetIdentifier(const string &identifier)
         return;
     }
 
-#if AR_VERSION == 1
-    // When changing a layer's identifier, assume that relative identifiers are
-    // relative to the current working directory.
-    const string absIdentifier = ArGetResolver().IsRelativePath(identifier) ?
-        TfAbsPath(identifier) : identifier;
-#else
     // Create an identifier for the layer based on the desired identifier
     // that was passed in. Since this may identifier may point to an asset
     // that doesn't exist yet, use CreateIdentifierForNewAsset.
     newLayerPath = ArGetResolver().CreateIdentifierForNewAsset(newLayerPath);
     const string absIdentifier = 
         Sdf_CreateIdentifier(newLayerPath, newArguments);
-#endif
     const ArResolvedPath oldResolvedPath = GetResolvedPath();
 
     // Hold open a change block to defer identifier-did-change
@@ -2553,52 +2494,13 @@ SdfLayer::SetIdentifier(const string &identifier)
     // new location yet.
     const ArResolvedPath newResolvedPath = GetResolvedPath();
     if (oldResolvedPath != newResolvedPath) {
-#if AR_VERSION == 1
-        _assetModificationTime = ArGetResolver().GetModificationTimestamp(
-            GetIdentifier(), newResolvedPath);
-#else
         const ArTimestamp timestamp = ArGetResolver().GetModificationTimestamp(
             newLayerPath, newResolvedPath);
         _assetModificationTime =
             (timestamp.IsValid() || Sdf_ResolvePath(newLayerPath)) ?
             VtValue(timestamp) : VtValue();
-#endif
     }
 }
-
-#if AR_VERSION == 1
-
-void
-SdfLayer::UpdateAssetInfo(const string &fileVersion)
-{
-    TRACE_FUNCTION();
-    TF_DEBUG(SDF_LAYER).Msg(
-        "SdfLayer::UpdateAssetInfo('%s')\n",
-        fileVersion.c_str());
-
-    // Hold open a change block to defer identifier-did-change
-    // notification until the mutex is unlocked.
-    SdfChangeBlock block;
-    {
-        // If the layer has a resolve info with a non-empty asset name, this
-        // means that the layer identifier is a search-path to a layer within
-        // an asset, which last resolved to a pinnable location. Bind the
-        // original context found in the resolve info within this block so the
-        // layer's search path identifier can be properly re-resolved within
-        // _InitializeFromIdentifier.
-        std::unique_ptr<ArResolverContextBinder> binder;
-        if (!GetAssetName().empty()) {
-            binder.reset(new ArResolverContextBinder(
-                    _assetInfo->resolverContext));
-        }    
-
-        tbb::queuing_rw_mutex::scoped_lock lock(_GetLayerRegistryMutex());
-        _InitializeFromIdentifier(GetIdentifier(),
-            /* realPath */ std::string(), fileVersion);
-    }
-}
-
-#else
 
 void
 SdfLayer::UpdateAssetInfo()
@@ -2626,8 +2528,6 @@ SdfLayer::UpdateAssetInfo()
         _InitializeFromIdentifier(GetIdentifier());
     }
 }
-
-#endif // AR_VERSION
 
 string
 SdfLayer::GetDisplayName() const
@@ -2721,16 +2621,8 @@ SdfLayer::ComputeAbsolutePath(const string& assetPath) const
         return assetPath;
     }
 
-#if AR_VERSION == 1
-    // Make it relative to the repository path, if available, so that path
-    // resolution will work for references.
-    const string relativeToPath = GetRepositoryPath().empty() ?
-        GetRealPath() : GetRepositoryPath();
-    return ArGetResolver().AnchorRelativePath(relativeToPath, assetPath);
-#else
     return SdfComputeAssetPathRelativeToLayer(
         SdfCreateNonConstHandle(this), assetPath);
-#endif
 }
 
 string
@@ -3300,8 +3192,21 @@ SdfLayer::_OpenLayerAndUnlockRegistry(
         info.isAnonymous ? info.layerPath : info.resolvedLayerPath;
 
     if (!layer->IsMuted()) {
-        // Run the file parser to read in the file contents.
-        if (!layer->_Read(info.identifier, readFilePath, metadataOnly)) {
+        // Run the file parser to read in the file contents.  We do this in a
+        // dispatcher, so that other threads that "wait" to read this file can
+        // actually participate in completing its loading (assuming the layer
+        // _Read is internally task-parallel).
+        bool readSuccess = false;
+        // XXX: Disabled for now due to intermittent crashes.
+        // WorkWithScopedParallelism([&]() {
+        //     layer->_initDispatcher.Run([&readSuccess, &layer, &info,
+        //                                 &readFilePath, metadataOnly]() {
+            readSuccess =
+                layer->_Read(info.identifier, readFilePath, metadataOnly);
+        //     });
+        //     layer->_initDispatcher.Wait();
+        //});
+        if (!readSuccess) {
             layer->_FinishInitialization(/* success = */ false);
             return TfNullPtr;
         }
@@ -3315,16 +3220,6 @@ SdfLayer::_OpenLayerAndUnlockRegistry(
         // Grab modification timestamp.
         VtValue timestamp(ArGetResolver().GetModificationTimestamp(
             info.layerPath, ArResolvedPath(readFilePath)));
-#if AR_VERSION == 1
-        if (timestamp.IsEmpty()) {
-            TF_CODING_ERROR(
-                "Unable to get modification timestamp for '%s (%s)'",
-                info.identifier.c_str(), readFilePath.c_str());
-            layer->_FinishInitialization(/* success = */ false);
-            return TfNullPtr;
-        }
-#endif
-        
         layer->_assetModificationTime.Swap(timestamp);
     }
 
@@ -3356,7 +3251,7 @@ SdfLayer::GetSpecType(const SdfPath& path) const
 vector<TfToken>
 SdfLayer::ListFields(const SdfPath& path) const
 {
-    return _ListFields(GetSchema(), *get_pointer(_data), path);
+    return _ListFields(_schema, *get_pointer(_data), path);
 }
 
 vector<TfToken>
@@ -3408,7 +3303,7 @@ SdfLayer::_GetRequiredFieldDef(const SdfPath &path,
                                const TfToken &fieldName,
                                SdfSpecType specType) const
 {
-    SdfSchemaBase const &schema = GetSchema();
+    SdfSchemaBase const &schema = _schema;
     if (ARCH_UNLIKELY(schema.IsRequiredFieldName(fieldName))) {
         // Get the spec definition.
         if (specType == SdfSpecTypeUnknown) {
@@ -4528,9 +4423,11 @@ SdfLayer::_IsInert(const SdfPath &path, bool ignoreChildren,
         return false;
     }
 
-    // Prims and properties don't affect the scene if they only contain
-    // opinions about required fields.
+    // Prims, variants, and properties don't affect the scene if they only
+    // contain opinions about required fields.
     if (specType == SdfSpecTypePrim         ||
+        specType == SdfSpecTypeVariant      ||
+        specType == SdfSpecTypeVariantSet   ||
         specType == SdfSpecTypeAttribute    ||
         specType == SdfSpecTypeRelationship) {
 
@@ -4541,16 +4438,20 @@ SdfLayer::_IsInert(const SdfPath &path, bool ignoreChildren,
         }
 
         TF_FOR_ALL(field, fields) {
-            // If specified, skip over prim name children and properties.
-            // This is a special case to allow _IsInertSubtree to process
-            // these children separately.
-            if (specType == SdfSpecTypePrim && ignoreChildren) {
-                if (*field == SdfChildrenKeys->PrimChildren ||
-                    *field == SdfChildrenKeys->PropertyChildren) {
-                    continue;
-                }
+            // If specified, skip over children fields.  This is a special case
+            // to allow _IsInertSubtree to process these children separately.
+            if (ignoreChildren &&
+                ((specType == SdfSpecTypePrim &&
+                  (*field == SdfChildrenKeys->PrimChildren ||
+                   *field == SdfChildrenKeys->PropertyChildren ||
+                   *field == SdfChildrenKeys->VariantSetChildren))
+                 ||
+                 (specType == SdfSpecTypeVariantSet &&
+                  *field == SdfChildrenKeys->VariantChildren))) {
+                continue;
             }
 
+            // If the field is required, ignore it.
             if (specDefinition->IsRequiredField(*field)) {
                 continue;
             }
@@ -4574,12 +4475,38 @@ SdfLayer::_IsInertSubtree(
         return false;
     }
 
-    if (path.IsPrimPath()) {
-        std::vector<TfToken> prims;
-        if (HasField(path, SdfChildrenKeys->PrimChildren, &prims)) {
-            for (const TfToken& child : prims) {
-                if (!_IsInertSubtree(path.AppendChild(child), inertSpecs)) {
+    // Check for a variant set path first -- this is a variant selection path
+    // whose selection is the empty string.
+    if (path.IsPrimVariantSelectionPath() &&
+        path.GetVariantSelection().second.empty()) {
+
+        std::string vsetName = path.GetVariantSelection().first;
+        SdfPath parentPath = path.GetParentPath();
+
+        std::vector<TfToken> variants;
+        if (HasField(path, SdfChildrenKeys->VariantChildren, &variants)) {
+            for (const TfToken &variant: variants) {
+                if (!_IsInertSubtree(
+                        parentPath.AppendVariantSelection(
+                            vsetName, variant.GetString()),
+                        inertSpecs)) {
                     return false;
+                }
+            }
+        }
+    }
+    else if (path.IsPrimOrPrimVariantSelectionPath()) {
+
+        // Check for prim & variant set children.
+        for (auto const &childrenField: {
+                SdfChildrenKeys->PrimChildren,
+                SdfChildrenKeys->VariantSetChildren }) {
+            std::vector<TfToken> childNames;
+            if (HasField(path, childrenField, &childNames)) {
+                for (const TfToken& name : childNames) {
+                    if (!_IsInertSubtree(path.AppendChild(name), inertSpecs)) {
+                        return false;
+                    }
                 }
             }
         }
@@ -4666,15 +4593,6 @@ SdfLayer::_WriteToFile(const string & newFileName,
             newFileName.c_str());
         return false;
     }
-
-#if AR_VERSION == 1
-    if (!ArGetResolver().CreatePathForLayer(newFileName)) {
-        TF_RUNTIME_ERROR(
-            "Cannot create path to write '%s'",
-            newFileName.c_str());
-        return false;
-    }
-#endif
 
     // If the output file format has a different schema, then transfer content
     // to an in-memory layer first just to validate schema compatibility.
@@ -4763,14 +4681,6 @@ SdfLayer::_Save(bool force) const
     // Record modification timestamp.
     VtValue timestamp(ArGetResolver().GetModificationTimestamp(
         GetIdentifier(), path));
-#if AR_VERSION == 1
-    if (timestamp.IsEmpty()) {
-        TF_CODING_ERROR(
-            "Unable to get modification timestamp for '%s (%s)'",
-            GetIdentifier().c_str(), path.GetPathString().c_str());
-        return false;
-    }
-#endif
     _assetModificationTime.Swap(timestamp);
 
     SdfNotice::LayerDidSaveLayerToFile().Send(_self);

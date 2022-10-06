@@ -268,14 +268,13 @@ For further information see the documentation on the Alembic plugin [here](http:
 
 Enable [MaterialX](https://github.com/materialx/materialx) support in the 
 build by specifying the cmake flag ```PXR_ENABLE_MATERIALX_SUPPORT=TRUE``` when 
-invoking cmake. Note that MaterialX with shared library support is required on 
-Linux and MacOS.
+invoking cmake. Note that MaterialX with shared library support is required.
 
 The additional dependencies that must be supplied when invoking cmake are:
 
-| Dependency Name    | Description                              |
-| ------------------ |----------------------------------------  |
-| MATERIALX_ROOT     | The root path to a MaterialX SDK install.| 
+| Dependency Name    | Description                                                 |
+| ------------------ |-----------------------------------------------------------  |
+| MaterialX_DIR      | Path to the CMake package config of a MaterialX SDK install.|
 
 See [3rd Party Library and Application Versions](VERSIONS.md) for version information.
 
@@ -292,6 +291,13 @@ when invoking cmake. This plugin is compatible with Draco 1.3.4. The additional 
 
 Disable unit testing and prevent tests from being built by specifying the cmake flag ```PXR_BUILD_TESTS=FALSE```
 when invoking cmake.
+
+In order to aid with diagnosing of failing tests, test generated files for failing test are explicitly put in the following directories, where
+<ctest_run_timestamp> (formatted as "%Y-%m-%dT%H.%M.%S") represents the timestamp when ctest was run for the failing test.
+```
+${CMAKE_BINARY_DIR}/Testing/Failed-Diffs/<ctest_run_timestamp>/${TEST_NAME}/${filename}.result.${ext}
+${CMAKE_BINARY_DIR}/Testing/Failed-Diffs/<ctest_run_timestamp>/${TEST_NAME}/${filename}.baseline.${ext}
+```
 
 ## Other Build Options
 
@@ -603,10 +609,15 @@ platforms to avoid issues with Boost config files (introduced in Boost version
 to use Boost specified config files for their USD build, specify 
 -DBoost_NO_BOOST_CMAKE=OFF when running cmake.
 
-2. Windows and Python 3.8+
+2. Windows and Python 3.8+ (non-Anaconda)
 Python 3.8 and later on Windows will no longer search PATH for DLL dependencies.
 Instead, clients can call `os.add_dll_directory(p)` to set paths to search.
 By default on that platform USD will iterate over PATH and add all paths using
 `os.add_dll_directory()` when importing Python modules. Users may override
 this by setting the environment variable `PXR_USD_WINDOWS_DLL_PATH` to a PATH-like
 string. If this is set, USD will use these paths instead.
+
+Note that the above does not apply to Anaconda python 3.8+ interpreters, as they
+are modified to behave like pre-3.8 python interpreters, and so continue to use
+the PATH for DLL dependencies.  When running under Anaconda users should
+configure their system the same way they did for pre-python 3.8.
