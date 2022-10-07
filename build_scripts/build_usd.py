@@ -1506,7 +1506,9 @@ def InstallUSD(context, force, buildArgs):
         else:
             extraArgs.append('-DPXR_ENABLE_PYTHON_SUPPORT=OFF')
 
-        if context.buildShared:
+        if context.buildStatic:
+            extraArgs.append('-DBUILD_SHARED_LIBS=OFF')
+        elif context.buildShared:
             extraArgs.append('-DBUILD_SHARED_LIBS=ON')
         elif context.buildMonolithic:
             extraArgs.append('-DPXR_BUILD_MONOLITHIC=ON')
@@ -1758,7 +1760,7 @@ group.add_argument("--inst", type=str,
 
 group = parser.add_argument_group(title="USD Options")
 
-(SHARED_LIBS, MONOLITHIC_LIB) = (0, 1)
+(SHARED_LIBS, MONOLITHIC_LIB, STATIC_LIBS) = (0, 1, 2)
 subgroup = group.add_mutually_exclusive_group()
 subgroup.add_argument("--build-shared", dest="build_type",
                       action="store_const", const=SHARED_LIBS, 
@@ -1767,6 +1769,9 @@ subgroup.add_argument("--build-shared", dest="build_type",
 subgroup.add_argument("--build-monolithic", dest="build_type",
                       action="store_const", const=MONOLITHIC_LIB,
                       help="Build a single monolithic shared library")
+subgroup.add_argument("--build-static", dest="build_type",
+                      action="store_const", const=STATIC_LIBS, 
+                      help="Build individual static libraries")
 
 subgroup = group.add_mutually_exclusive_group()
 subgroup.add_argument("--tests", dest="build_tests", action="store_true",
@@ -1986,6 +1991,7 @@ class InstallContext:
 
         self.debugPython = args.debug_python
 
+        self.buildStatic = (args.build_type == STATIC_LIBS)
         self.buildShared = (args.build_type == SHARED_LIBS)
         self.buildMonolithic = (args.build_type == MONOLITHIC_LIB)
 
