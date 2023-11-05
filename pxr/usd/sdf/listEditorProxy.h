@@ -34,9 +34,9 @@
 #include "pxr/base/vt/value.h"  // for Vt_DefaultValueFactory
 
 #include <boost/optional.hpp>
-#include <boost/shared_ptr.hpp>
 
 #include <functional>
+#include <memory>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -78,7 +78,7 @@ public:
 
     /// Creates a new proxy object backed by the supplied list editor.
     explicit SdfListEditorProxy(
-        const boost::shared_ptr<Sdf_ListEditor<TypePolicy> >& listEditor)
+        const std::shared_ptr<Sdf_ListEditor<TypePolicy> >& listEditor)
         : _listEditor(listEditor)
     {
     }
@@ -294,8 +294,20 @@ public:
         return ListProxy(_listEditor, SdfListOpTypeOrdered);
     }
 
-    /// Returns the added or explicitly set items.
+    /// Deprecated.  Please use \ref GetAppliedItems
     value_vector_type GetAddedOrExplicitItems() const
+    {
+        return GetAppliedItems();
+    }
+
+    /// Returns the effective list of items represented by the operations in
+    /// this list op. This function should be used to determine the final list
+    /// of items added instead of looking at the individual explicit, prepended,
+    /// and appended item lists. 
+    ///
+    /// This is equivalent to calling ApplyOperations on an empty item vector.
+    
+    value_vector_type GetAppliedItems() const
     {
         value_vector_type result;
         if (_Validate()) {
@@ -461,7 +473,7 @@ private:
     }
 
 private:
-    boost::shared_ptr<Sdf_ListEditor<TypePolicy> > _listEditor;
+    std::shared_ptr<Sdf_ListEditor<TypePolicy> > _listEditor;
 
     friend class Sdf_ListEditorProxyAccess;
     template <class T> friend class SdfPyWrapListEditorProxy;

@@ -35,6 +35,7 @@
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/base/vt/array.h"
 
+#include "pxr/usd/ar/resolverContext.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/usd/sdf/assetPath.h"
 
@@ -55,6 +56,8 @@ using HdDoubleDataSource = HdTypedSampledDataSource<double>;
 using HdDoubleDataSourceHandle = HdDoubleDataSource::Handle;
 using HdFloatArrayDataSource = HdTypedSampledDataSource<VtArray<float>>;
 using HdFloatArrayDataSourceHandle = HdFloatArrayDataSource::Handle;
+using HdDoubleArrayDataSource = HdTypedSampledDataSource<VtArray<double>>;
+using HdDoubleArrayDataSourceHandle = HdDoubleArrayDataSource::Handle;
 
 // Bool
 using HdBoolDataSource = HdTypedSampledDataSource<bool>;
@@ -84,8 +87,12 @@ using HdVec2iDataSource = HdTypedSampledDataSource<GfVec2i>;
 using HdVec2iDataSourceHandle = HdVec2iDataSource::Handle;
 using HdVec2fDataSource = HdTypedSampledDataSource<GfVec2f>;
 using HdVec2fDataSourceHandle = HdVec2fDataSource::Handle;
+using HdVec2dDataSource = HdTypedSampledDataSource<GfVec2d>;
+using HdVec2dDataSourceHandle = HdVec2dDataSource::Handle;
 using HdVec2fArrayDataSource = HdTypedSampledDataSource<VtArray<GfVec2f>>;
 using HdVec2fArrayDataSourceHandle = HdVec2fArrayDataSource::Handle;
+using HdVec2dArrayDataSource = HdTypedSampledDataSource<VtArray<GfVec2d>>;
+using HdVec2dArrayDataSourceHandle = HdVec2dArrayDataSource::Handle;
 
 using HdVec3iDataSource = HdTypedSampledDataSource<GfVec3i>;
 using HdVec3iDataSourceHandle = HdVec3iDataSource::Handle;
@@ -93,9 +100,6 @@ using HdVec3fDataSource = HdTypedSampledDataSource<GfVec3f>;
 using HdVec3fDataSourceHandle = HdVec3fDataSource::Handle;
 using HdVec3fArrayDataSource = HdTypedSampledDataSource<VtArray<GfVec3f>>;
 using HdVec3fArrayDataSourceHandle = HdVec3fArrayDataSource::Handle;
-
-using HdVec4iDataSource = HdTypedSampledDataSource<GfVec4i>;
-using HdVec4iDataSourceHandle = HdVec4iDataSource::Handle;
 using HdVec3dDataSource = HdTypedSampledDataSource<GfVec3d>;
 using HdVec3dDataSourceHandle = HdVec3dDataSource::Handle;
 using HdVec3dArrayDataSource = HdTypedSampledDataSource<VtArray<GfVec3d>>;
@@ -103,6 +107,8 @@ using HdVec3dArrayDataSourceHandle = HdVec3dArrayDataSource::Handle;
 
 using HdVec4iDataSource = HdTypedSampledDataSource<GfVec4i>;
 using HdVec4iDataSourceHandle = HdVec4iDataSource::Handle;
+using HdVec4fDataSource = HdTypedSampledDataSource<GfVec4f>;
+using HdVec4fDataSourceHandle = HdVec4fDataSource::Handle;
 using HdVec4dArrayDataSource = HdTypedSampledDataSource<VtArray<GfVec4d>>;
 using HdVec4dArrayDataSourceHandle = HdVec4dArrayDataSource::Handle;
 
@@ -121,6 +127,10 @@ using HdFormatDataSourceHandle = HdFormatDataSource::Handle;
 
 using HdTupleTypeDataSource = HdTypedSampledDataSource<HdTupleType>;
 using HdTupleTypeDataSourceHandle = HdTupleTypeDataSource::Handle;
+
+// ArResolverContext
+using HdResolverContextDataSource = HdTypedSampledDataSource<ArResolverContext>;
+using HdResolverContextDataSourceHandle = HdResolverContextDataSource::Handle;
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

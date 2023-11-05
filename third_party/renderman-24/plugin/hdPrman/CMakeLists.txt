@@ -53,6 +53,7 @@ pxr_plugin(${PXR_PACKAGE}
     LIBRARIES
         ar
         arch
+        js
         plug
         tf
         vt
@@ -76,7 +77,9 @@ pxr_plugin(${PXR_PACKAGE}
         cylinder
         coordSys
         debugCodes
+        debugUtil
         dependencyForwardingSceneIndexPlugin
+        displayFilter
         gprim
         gprimbase
         instancer
@@ -85,17 +88,17 @@ pxr_plugin(${PXR_PACKAGE}
         lightFilterUtils
         material
         matfiltConvertPreviewMaterial
-        matfiltFilterChain
         matfiltResolveVstructs
         mesh
+        outputFilterInvalidatingSceneIndexPlugin
         paramsSetter
         points
         renderDelegate
         renderSettings
         rixStrings
         sampleFilter
-        sampleFilterInvalidatingSceneIndexPlugin
         sphere
+        tokens
         volume
         xcpt
         ${optionalPublicClasses}
@@ -103,11 +106,14 @@ pxr_plugin(${PXR_PACKAGE}
     PRIVATE_CLASSES
         cameraContext
         renderPass
+        extComputationPrimvarPruningSceneIndexPlugin
         framebuffer
         implicitSurfaceSceneIndexPlugin
         matfiltSceneIndexPlugins
+        pinnedCurveExpandingSceneIndexPlugin
         renderBuffer
         renderParam
+        renderSettingsFilteringSceneIndexPlugin
         renderViewContext
         resourceRegistry
         velocityMotionBlurSceneIndexPlugin
@@ -133,13 +139,13 @@ pxr_plugin(${PXR_PACKAGE}
 
 # Include paths to hdPrman headers within hdPrman itself look like
 # #include "hdPrman/...", so we need to add include/pxr/imaging
-# to the include paths for this library. We use CMAKE_BINARY_DIR
+# to the include paths for this library. We use PROJECT_BINARY_DIR
 # to include headers out of the build directory, which is what
 # normally happens in the USD build.
 if(TARGET hdPrman)
     target_include_directories(${PXR_PACKAGE}
         PRIVATE
-            "${CMAKE_BINARY_DIR}/include/pxr/imaging"
+            "${PROJECT_BINARY_DIR}/include/pxr/imaging"
     )
 endif()
 

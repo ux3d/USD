@@ -74,13 +74,21 @@ struct UsdSkelTokensType {
     /// 
     /// UsdSkelAnimation
     const TfToken blendShapeWeights;
+    /// \brief "classicLinear"
+    /// 
+    /// Fallback value for UsdSkelBindingAPI::GetSkinningMethodAttr()
+    const TfToken classicLinear;
+    /// \brief "dualQuaternion"
+    /// 
+    /// Possible value for UsdSkelBindingAPI::GetSkinningMethodAttr()
+    const TfToken dualQuaternion;
     /// \brief "jointNames"
     /// 
     /// UsdSkelSkeleton
     const TfToken jointNames;
     /// \brief "joints"
     /// 
-    /// UsdSkelAnimation, UsdSkelSkeleton
+    /// UsdSkelSkeleton, UsdSkelAnimation
     const TfToken joints;
     /// \brief "normalOffsets"
     /// 
@@ -106,6 +114,10 @@ struct UsdSkelTokensType {
     /// 
     /// UsdSkelBindingAPI
     const TfToken primvarsSkelJointWeights;
+    /// \brief "primvars:skel:skinningMethod"
+    /// 
+    /// UsdSkelBindingAPI
+    const TfToken primvarsSkelSkinningMethod;
     /// \brief "restTransforms"
     /// 
     /// UsdSkelSkeleton
@@ -146,6 +158,26 @@ struct UsdSkelTokensType {
     /// 
     /// UsdSkelInbetweenShape - The weight location at which the inbetween shape applies.
     const TfToken weight;
+    /// \brief "BlendShape"
+    /// 
+    /// Schema identifer and family for UsdSkelBlendShape
+    const TfToken BlendShape;
+    /// \brief "SkelAnimation"
+    /// 
+    /// Schema identifer and family for UsdSkelAnimation
+    const TfToken SkelAnimation;
+    /// \brief "SkelBindingAPI"
+    /// 
+    /// Schema identifer and family for UsdSkelBindingAPI
+    const TfToken SkelBindingAPI;
+    /// \brief "Skeleton"
+    /// 
+    /// Schema identifer and family for UsdSkelSkeleton
+    const TfToken Skeleton;
+    /// \brief "SkelRoot"
+    /// 
+    /// Schema identifer and family for UsdSkelRoot
+    const TfToken SkelRoot;
     /// A vector of all of the tokens listed above.
     const std::vector<TfToken> allTokens;
 };

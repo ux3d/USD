@@ -66,6 +66,9 @@ HgiMetalShaderFunction::HgiMetalShaderFunction(
                                                         options:options
                                                         error:&error];
 
+        [options release];
+        options = nil;
+
         NSString *entryPoint = nullptr;
         switch (_descriptor.shaderStage) {
             case HgiShaderStageVertex:
@@ -76,6 +79,9 @@ HgiMetalShaderFunction::HgiMetalShaderFunction(
                 break;
             case HgiShaderStageCompute:
                 entryPoint = @"computeEntryPoint";
+                break;
+            case HgiShaderStagePostTessellationControl:
+                entryPoint = @"vertexEntryPoint";
                 break;
             case HgiShaderStagePostTessellationVertex:
                 entryPoint = @"vertexEntryPoint";

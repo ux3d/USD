@@ -236,6 +236,22 @@ HdUnitTestDelegate::AddMesh(SdfPath const &id,
 }
 
 void
+HdUnitTestDelegate::SetMeshCullStyle(
+    SdfPath const &id, HdCullStyle const &cullStyle)
+{
+    auto it = _meshes.find(id);
+    if (it != _meshes.end()) {
+        if (it->second.cullStyle != cullStyle) {
+            it->second.cullStyle = cullStyle;
+            HdChangeTracker& tracker = GetRenderIndex().GetChangeTracker();
+            tracker.MarkRprimDirty(id, HdChangeTracker::DirtyCullStyle);
+        }
+    } else {
+        TF_WARN("Could not find mesh Rprim named %s. \n", id.GetText());
+    }
+}
+
+void
 HdUnitTestDelegate::AddBasisCurves(SdfPath const &id,
                                     VtVec3fArray const &points,
                                     VtIntArray const &curveVertexCounts,
@@ -765,7 +781,7 @@ HdUnitTestDelegate::GetBasisCurvesTopology(SdfPath const& id)
     // Need to implement testing support for basis curves
     return HdBasisCurvesTopology(curve.type,
                                  curve.basis,
-                                 HdTokens->nonperiodic,
+                                 curve.wrap,
                                  curve.curveVertexCounts,
                                  curve.curveIndices);
 }
@@ -824,6 +840,16 @@ HdUnitTestDelegate::GetDisplayStyle(SdfPath const& id)
     }
     // returns fallback refinelevel
     return HdDisplayStyle(_refineLevel);
+}
+
+/*virtual*/
+HdCullStyle 
+HdUnitTestDelegate::GetCullStyle(SdfPath const& id)
+{
+    if (_meshes.find(id) != _meshes.end()) {
+        return _meshes[id].cullStyle;
+    }
+    return HdCullStyleDontCare;
 }
 
 /*virtual*/
@@ -1051,15 +1077,18 @@ HdUnitTestDelegate::Get(SdfPath const& id, TfToken const& key)
         else if(_points.find(id) != _points.end()) {
             return VtValue(_points[id].points);
         }
-    } else if (key == HdInstancerTokens->scale) {
+    } else if (key == HdInstancerTokens->instanceScales ||
+               key == HdInstancerTokens->scale) {
         if (_instancers.find(id) != _instancers.end()) {
             return VtValue(_instancers[id].scale);
         }
-    } else if (key == HdInstancerTokens->rotate) {
+    } else if (key == HdInstancerTokens->instanceRotations ||
+               key == HdInstancerTokens->rotate) {
         if (_instancers.find(id) != _instancers.end()) {
             return VtValue(_instancers[id].rotate);
         }
-    } else if (key == HdInstancerTokens->translate) {
+    } else if (key == HdInstancerTokens->instanceTranslations ||
+               key == HdInstancerTokens->translate) {
         if (_instancers.find(id) != _instancers.end()) {
             return VtValue(_instancers[id].translate);
         }
@@ -1097,15 +1126,18 @@ HdUnitTestDelegate::GetIndexedPrimvar(SdfPath const& id, TfToken const& key,
         else if(_points.find(id) != _points.end()) {
             return VtValue(_points[id].points);
         }
-    } else if (key == HdInstancerTokens->scale) {
+    } else if (key == HdInstancerTokens->instanceScales ||
+               key == HdInstancerTokens->scale) {
         if (_instancers.find(id) != _instancers.end()) {
             return VtValue(_instancers[id].scale);
         }
-    } else if (key == HdInstancerTokens->rotate) {
+    } else if (key == HdInstancerTokens->instanceRotations ||
+               key == HdInstancerTokens->rotate) {
         if (_instancers.find(id) != _instancers.end()) {
             return VtValue(_instancers[id].rotate);
         }
-    } else if (key == HdInstancerTokens->translate) {
+    } else if (key == HdInstancerTokens->instanceTranslations ||
+               key == HdInstancerTokens->translate) {
         if (_instancers.find(id) != _instancers.end()) {
             return VtValue(_instancers[id].translate);
         }
@@ -1149,9 +1181,18 @@ HdUnitTestDelegate::GetPrimvarDescriptors(SdfPath const& id,
     }
     if (interpolation == HdInterpolationInstance && _hasInstancePrimvars &&
         _instancers.find(id) != _instancers.end()) {
-        primvars.emplace_back(HdInstancerTokens->scale, interpolation);
-        primvars.emplace_back(HdInstancerTokens->rotate, interpolation);
-        primvars.emplace_back(HdInstancerTokens->translate, interpolation);
+        if (TfGetEnvSetting(HD_USE_DEPRECATED_INSTANCER_PRIMVAR_NAMES)) {
+            primvars.emplace_back(HdInstancerTokens->scale, interpolation);
+            primvars.emplace_back(HdInstancerTokens->rotate, interpolation);
+            primvars.emplace_back(HdInstancerTokens->translate, interpolation);
+        } else {
+            primvars.emplace_back(HdInstancerTokens->instanceScales,
+                interpolation);
+            primvars.emplace_back(HdInstancerTokens->instanceRotations,
+                interpolation);
+            primvars.emplace_back(HdInstancerTokens->instanceTranslations,
+                interpolation);
+        }
     }
 
     auto const cit = _primvars.find(id);
@@ -1650,6 +1691,21 @@ HdUnitTestDelegate::AddCurves(
 }
 
 void
+HdUnitTestDelegate::SetCurveWrapMode(
+    SdfPath const &id, TfToken const &wrap)
+{
+    if (_curves.find(id) != _curves.end()) {
+        if (_curves[id].wrap != wrap) {
+            _curves[id].wrap = wrap;
+            HdChangeTracker& tracker = GetRenderIndex().GetChangeTracker();
+            tracker.MarkRprimDirty(id, HdChangeTracker::DirtyTopology);
+        }
+    } else {
+        TF_WARN("Could not find Rprim named %s.\n", id.GetText());
+    }
+}
+
+void
 HdUnitTestDelegate::AddPoints(
     SdfPath const &id, GfMatrix4f const &transform,
     HdInterpolation colorInterp,
@@ -1962,7 +2018,7 @@ HdUnitTestDelegate::PopulateBasicTestSet()
                            HdInterpolationVertex, HdInterpolationVertex);
 
         dmat.SetTranslate(GfVec3d(xPos, 3.0, 0.0));
-        AddCurves(SdfPath("/curve3"), HdTokens->cubic, HdTokens->bSpline, GfMatrix4f(dmat),
+        AddCurves(SdfPath("/curve3"), HdTokens->cubic, HdTokens->bspline, GfMatrix4f(dmat),
                            HdInterpolationVertex, HdInterpolationConstant);
 
         dmat.SetTranslate(GfVec3d(xPos, 6.0, 0.0));

@@ -40,36 +40,41 @@ class UsdGeomCube;
 ///
 /// Delegate support for UsdGeomCube.
 ///
-class UsdImagingCubeAdapter : public UsdImagingGprimAdapter {
+class UsdImagingCubeAdapter : public UsdImagingGprimAdapter
+{
 public:
-    typedef UsdImagingGprimAdapter BaseAdapter;
+    using BaseAdapter = UsdImagingGprimAdapter;
 
     UsdImagingCubeAdapter()
         : UsdImagingGprimAdapter()
     {}
     USDIMAGING_API
-    virtual ~UsdImagingCubeAdapter();
+    ~UsdImagingCubeAdapter() override;
 
     // ---------------------------------------------------------------------- //
     /// \name Scene Index Support
     // ---------------------------------------------------------------------- //
 
     USDIMAGING_API
-    TfTokenVector GetImagingSubprims() override;
+    TfTokenVector GetImagingSubprims(UsdPrim const& prim) override;
 
     USDIMAGING_API
-    TfToken GetImagingSubprimType(TfToken const& subprim) override;
+    TfToken GetImagingSubprimType(
+            UsdPrim const& prim,
+            TfToken const& subprim) override;
 
     USDIMAGING_API
     HdContainerDataSourceHandle GetImagingSubprimData(
-            TfToken const& subprim,
             UsdPrim const& prim,
+            TfToken const& subprim,
             const UsdImagingDataSourceStageGlobals &stageGlobals) override;
 
     USDIMAGING_API
     HdDataSourceLocatorSet InvalidateImagingSubprim(
-        TfToken const& subprim,
-        TfTokenVector const& properties) override;
+            UsdPrim const& prim,
+            TfToken const& subprim,
+            TfTokenVector const& properties,
+            UsdImagingPropertyInvalidationType invalidationType) override;
 
     // ---------------------------------------------------------------------- //
     /// \name Initialization
@@ -87,7 +92,7 @@ public:
     USDIMAGING_API
     HdDirtyBits ProcessPropertyChange(UsdPrim const& prim,
                                       SdfPath const& cachePath,
-                                      TfToken const& propertyName);
+                                      TfToken const& propertyName) override;
 
     // ---------------------------------------------------------------------- //
     /// \name Parallel Setup and Resolve
@@ -117,13 +122,6 @@ public:
     VtValue GetPoints(
         UsdPrim const& prim,
         UsdTimeCode time) const override;
-
-    USDIMAGING_API
-    static VtValue GetMeshPoints(UsdPrim const& prim, 
-                                 UsdTimeCode time);
-    
-    USDIMAGING_API
-    static VtValue GetMeshTopology();
 };
 
 

@@ -153,6 +153,11 @@ void CheckField () {
     TF_AXIOM(array == schema.GetFallback(shaped_default).Get<VtArray<T> >());
 }
 
+template <>
+void CheckField<SdfOpaqueValue>() {
+    // Do nothing -- we don't allow opaque-valued plugin metadata
+}
+
 void CheckDictionary()
 {
     const SdfSchema& schema = SdfSchema::GetInstance();
@@ -617,4 +622,23 @@ void GetInfo<SdfAssetPath>(VtArray<SdfAssetPath> *array, string *name)
     (*array)[0] = SdfAssetPath("a");
     (*array)[1] = SdfAssetPath("b");
     (*array)[2] = SdfAssetPath("c");
+}
+
+template <>
+void GetInfo<SdfOpaqueValue>(VtArray<SdfOpaqueValue> *array, string *name)
+{
+    *name = "opaque";
+    // No initialization necessary; SdfOpaqueValue is an empty struct.
+    *array = VtArray<SdfOpaqueValue>(3);
+}
+
+template <>
+void
+GetInfo<SdfPathExpression>(VtArray<SdfPathExpression> *array, string *name)
+{
+    *name = "pathExpression";
+    *array = VtArray<SdfPathExpression>(3);
+    (*array)[0] = SdfPathExpression("/foo /bar");
+    (*array)[1] = SdfPathExpression("/bar /baz");
+    (*array)[2] = SdfPathExpression("/baz /qux");
 }

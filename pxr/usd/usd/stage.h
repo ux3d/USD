@@ -34,6 +34,7 @@
 #include "pxr/usd/usd/schemaRegistry.h"
 #include "pxr/usd/usd/stageLoadRules.h"
 #include "pxr/usd/usd/stagePopulationMask.h"
+#include "pxr/usd/usd/primDefinition.h"
 #include "pxr/usd/usd/primFlags.h"
 
 #include "pxr/base/tf/declarePtrs.h"
@@ -65,16 +66,17 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-
 class ArResolverContext;
 class GfInterval;
 class SdfAbstractDataValue;
+class Usd_AssetPathContext;
 class Usd_ClipCache;
 class Usd_InstanceCache;
 class Usd_InstanceChanges;
 class Usd_InterpolatorBase;
-class UsdResolveInfo;
 class Usd_Resolver;
+class UsdResolveInfo;
+class UsdResolveTarget;
 class UsdPrim;
 class UsdPrimRange;
 
@@ -129,7 +131,7 @@ SDF_DECLARE_HANDLES(SdfLayer);
 /// exercized with large scenes, as flattening defeats some of the benefits of
 /// referenced scene description, and may produce very large results, 
 /// especially in file formats that do not support data de-duplication, like
-/// the usda ASCII format!
+/// the usda text format!
 ///
 /// \section Usd_SessionLayer Stage Session Layers
 ///
@@ -139,9 +141,13 @@ SDF_DECLARE_HANDLES(SdfLayer);
 /// considered as permanent mutations to be recorded upon export.  A very 
 /// common use of session layers is to make variant selections, to pick a
 /// specific LOD or shading variation, for example.  The session layer is
-/// also frequently used to perform interactive vising/invsning of geometry
-/// and assets in the scene.   A session layer, if present, contributes to a 
-/// UsdStage's identity, for purposes of stage-caching, etc.
+/// also frequently used to override the visibility of geometry 
+/// and assets in the scene.  A session layer, if present, contributes to a 
+/// UsdStage's identity, for purposes of stage-caching, etc. 
+///
+/// To edit content in a session layer, get the layer's edit target using 
+/// stage->GetEditTargetForLocalLayer(stage->GetSessionLayer()) and set that
+/// target in the stage by calling SetEditTarget() or creating a UsdEditContext.
 ///
 class UsdStage : public TfRefBase, public TfWeakBase {
 public:
@@ -1633,21 +1639,38 @@ private:
     SdfPropertySpecHandleVector
     _GetPropertyStack(const UsdProperty &prop, UsdTimeCode time) const;
 
-    SdfPropertySpecHandle
-    _GetSchemaPropertySpec(const UsdPrim &prim, const TfToken &propName) const;
+    std::vector<std::pair<SdfPropertySpecHandle, SdfLayerOffset>> 
+    _GetPropertyStackWithLayerOffsets(
+        const UsdProperty &prop, UsdTimeCode time) const;
 
-    SdfPropertySpecHandle
-    _GetSchemaPropertySpec(const UsdProperty &prop) const;
+    static SdfPrimSpecHandleVector 
+    _GetPrimStack(const UsdPrim &prim);
 
-    template <class PropType>
-    SdfHandle<PropType>
-    _GetSchemaPropertySpec(const UsdProperty &prop) const;
+    static std::vector<std::pair<SdfPrimSpecHandle, SdfLayerOffset>> 
+    _GetPrimStackWithLayerOffsets(const UsdPrim &prim);
+
+    UsdPrimDefinition::Property
+    _GetSchemaProperty(const UsdProperty &prop) const;
+
+    UsdPrimDefinition::Attribute
+    _GetSchemaAttribute(const UsdAttribute &attr) const;
+
+    UsdPrimDefinition::Relationship
+    _GetSchemaRelationship(const UsdRelationship &rel) const;
 
     SdfAttributeSpecHandle
-    _GetSchemaAttributeSpec(const UsdAttribute &attr) const;
+    _CreateNewSpecFromSchemaAttribute(
+        const UsdPrim &prim,
+        const UsdPrimDefinition::Attribute &attrDef);
 
     SdfRelationshipSpecHandle
-    _GetSchemaRelationshipSpec(const UsdRelationship &rel) const;
+    _CreateNewSpecFromSchemaRelationship(
+        const UsdPrim &prim,
+        const UsdPrimDefinition::Relationship &relDef);
+
+    template <class PropType> 
+    SdfHandle<PropType>
+    _CreateNewPropertySpecFromSchema(const UsdProperty &prop);
 
     SdfPrimSpecHandle
     _CreatePrimSpecForEditing(const UsdPrim& prim);
@@ -1698,6 +1721,8 @@ private:
         static const bool value =
             std::is_same<T, SdfTimeCode>::value ||
             std::is_same<T, VtArray<SdfTimeCode>>::value ||
+            std::is_same<T, SdfPathExpression>::value ||
+            std::is_same<T, VtArray<SdfPathExpression>>::value ||
             std::is_same<T, SdfTimeSampleMap>::value ||
             std::is_same<T, VtDictionary>::value;
     };
@@ -1809,6 +1834,10 @@ private:
         const std::vector<Usd_PrimDataPtr> &prims,
         const std::vector<SdfPath> *primIndexPaths = nullptr);
 
+    // Composes the full prim type info for the prim based on its type name
+    // and applied API schemas.
+    void _ComposePrimTypeInfoImpl(Usd_PrimDataPtr prim);
+
     // Compose subtree rooted at \p prim under \p parent.  This function
     // ensures that the appropriate prim index is specified for \p prim if
     // \p parent is in a prototype.
@@ -1895,7 +1924,8 @@ private:
     // Helper for _Recompose to find the subtrees that need to be
     // fully recomposed and to recompose the name children of the
     // parents of these subtrees. Note that [start, finish) must be a
-    // sorted range of paths with no descendent paths.
+    // sorted range of map iterators whose keys are paths with no descendent
+    // paths. In C++20, consider using the ranges API to improve this.
     template <class Iter>
     void _ComputeSubtreesToRecompose(Iter start, Iter finish,
                                      std::vector<Usd_PrimDataPtr>* recompose);
@@ -1952,6 +1982,11 @@ private:
                                 SdfTimeCode *timeCodes,
                                 size_t numTimeCodes) const;
 
+    void _MakeResolvedPathExpressions(
+        UsdTimeCode time, const UsdAttribute &attr,
+        SdfPathExpression *pathExprs,
+        size_t numPathExprs) const;
+
     void _MakeResolvedAttributeValue(UsdTimeCode time, const UsdAttribute &attr,
                                      VtValue *value) const;
 
@@ -1971,6 +2006,8 @@ public:
             std::is_same<T, VtArray<SdfAssetPath>>::value ||
             std::is_same<T, SdfTimeCode>::value ||
             std::is_same<T, VtArray<SdfTimeCode>>::value ||
+            std::is_same<T, SdfPathExpression>::value ||
+            std::is_same<T, VtArray<SdfPathExpression>>::value ||
             std::is_same<T, SdfTimeSampleMap>::value ||
             std::is_same<T, VtDictionary>::value;
     };
@@ -2081,21 +2118,66 @@ private:
                          UsdResolveInfo *resolveInfo,
                          const UsdTimeCode *time = nullptr) const;
 
+    void _GetResolveInfoWithResolveTarget(
+        const UsdAttribute &attr, 
+        const UsdResolveTarget &resolveTarget,
+        UsdResolveInfo *resolveInfo,
+        const UsdTimeCode *time = nullptr) const;
+
     template <class T> struct _ExtraResolveInfo;
 
+    // Gets the value resolve info for the given attribute. If time is provided,
+    // the resolve info is evaluated for that specific time (which may be 
+    // default). Otherwise, if time is null, the resolve info is evaluated for
+    // "any numeric time" and will not populate values in extraInfo that 
+    // require a specific time to be evaluated.
     template <class T>
     void _GetResolveInfo(const UsdAttribute &attr, 
                          UsdResolveInfo *resolveInfo,
                          const UsdTimeCode *time = nullptr,
                          _ExtraResolveInfo<T> *extraInfo = nullptr) const;
 
+    // Gets the value resolve info for the given attribute using the given 
+    // resolve target. If time is provided, the resolve info is evaluated for 
+    // that specific time (which may be default). Otherwise, if time is null, 
+    // the resolve info is evaluated for "any numeric time" and will not 
+    // populate values in extraInfo that require a specific time to be 
+    // evaluated.
+    template <class T>
+    void _GetResolveInfoWithResolveTarget(
+        const UsdAttribute &attr, 
+        const UsdResolveTarget &resolveTarget,
+        UsdResolveInfo *resolveInfo,
+        const UsdTimeCode *time = nullptr,
+        _ExtraResolveInfo<T> *extraInfo = nullptr) const;
+
+    // Shared implementation function for _GetResolveInfo and 
+    // _GetResolveInfoWithResolveTarget. The only difference between how these
+    // two functions behave is in how they create the Usd_Resolver used for 
+    // iterating over nodes and layers, thus they provide this implementation
+    // with the needed MakeUsdResolverFn to create the Usd_Resolver.
+    template <class T, class MakeUsdResolverFn>
+    void _GetResolveInfoImpl(const UsdAttribute &attr, 
+                         UsdResolveInfo *resolveInfo,
+                         const UsdTimeCode *time,
+                         _ExtraResolveInfo<T> *extraInfo,
+                         const MakeUsdResolverFn &makeUsdResolveFn) const;
+
     template <class T> struct _ResolveInfoResolver;
     struct _PropertyStackResolver;
 
-    template <class Resolver>
-    void _GetResolvedValueImpl(const UsdProperty &prop,
-                               Resolver *resolver,
-                               const UsdTimeCode *time = nullptr) const;
+    template <class Resolver, class MakeUsdResolverFn>
+    void _GetResolvedValueAtDefaultImpl(
+        const UsdProperty &prop,
+        Resolver *resolver,
+        const MakeUsdResolverFn &makeUsdResolverFn) const;
+
+    template <class Resolver, class MakeUsdResolverFn>
+    void _GetResolvedValueAtTimeImpl(
+        const UsdProperty &prop,
+        Resolver *resolver,
+        const double *time,
+        const MakeUsdResolverFn &makeUsdResolverFn) const;
 
     bool _GetValue(UsdTimeCode time, const UsdAttribute &attr, 
                    VtValue* result) const;
@@ -2108,12 +2190,6 @@ private:
     bool _GetValueImpl(UsdTimeCode time, const UsdAttribute &attr, 
                        Usd_InterpolatorBase* interpolator,
                        T* value) const;
-
-    SdfLayerRefPtr
-    _GetLayerWithStrongestValue(
-        UsdTimeCode time, const UsdAttribute &attr) const;
-
-
 
     USD_API
     bool _GetValueFromResolveInfo(const UsdResolveInfo &info,
@@ -2131,6 +2207,14 @@ private:
                                       UsdTimeCode time, const UsdAttribute &attr,
                                       Usd_InterpolatorBase* interpolator,
                                       T* value) const;
+
+    template <class T>
+    bool _GetDefaultValueFromResolveInfoImpl(const UsdResolveInfo &info,
+                                             const UsdAttribute &attr,
+                                             T* value) const;
+
+    Usd_AssetPathContext
+    _GetAssetPathContext(UsdTimeCode time, const UsdAttribute &attr) const;
 
     // --------------------------------------------------------------------- //
     // Specialized Time Sample I/O
@@ -2182,6 +2266,9 @@ private:
 
     void _RegisterPerLayerNotices();
     void _RegisterResolverChangeNotice();
+
+    // Helper to obtain a malloc tag string for this stage.
+    inline char const *_GetMallocTagId() const;
 
 private:
 
@@ -2238,7 +2325,7 @@ private:
 
     // To provide useful aggregation of malloc stats, we bill everything
     // for this stage - from all access points - to this tag.
-    char const *_mallocTagID;
+    std::unique_ptr<std::string> _mallocTagID;
 
     // The state used when instantiating the stage.
     const InitialLoadSet _initialLoadSet;
@@ -2264,6 +2351,7 @@ private:
     friend class UsdSpecializes;
     friend class UsdVariantSet;
     friend class UsdVariantSets;
+    friend class Usd_AssetPathContext;
     friend class Usd_FlattenAccess;
     friend class Usd_PcpCacheAccess;
     friend class Usd_PrimData;
@@ -2404,7 +2492,6 @@ UsdStage::_SetMetadata(const UsdObject &object, const TfToken& key,
 {
     return _SetEditTargetMappedMetadata(object, key, keyPath, value);
 }
-
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

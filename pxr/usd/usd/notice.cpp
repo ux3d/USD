@@ -26,10 +26,6 @@
 #include "pxr/usd/usd/stage.h"
 #include "pxr/base/tf/stl.h"
 
-#include <boost/iterator/transform_iterator.hpp>
-
-using boost::make_transform_iterator;
-
 PXR_NAMESPACE_OPEN_SCOPE
 
 // Register the notice class
@@ -72,10 +68,11 @@ TfTokenVector
 UsdNotice::ObjectsChanged::PathRange::const_iterator::GetChangedFields() const
 {
     TfTokenVector fields;
-    for (const SdfChangeList::Entry* entry : base()->second) {
-        fields.insert(fields.end(),
-            make_transform_iterator(entry->infoChanged.begin(), TfGet<0>()),
-            make_transform_iterator(entry->infoChanged.end(), TfGet<0>()));
+    for (const SdfChangeList::Entry* entry : _underlyingIterator->second) {
+        fields.reserve(fields.size() + entry->infoChanged.size());
+        std::transform(
+            entry->infoChanged.begin(), entry->infoChanged.end(),
+            std::back_inserter(fields), TfGet<0>());
     }
 
     std::sort(fields.begin(), fields.end());
@@ -86,7 +83,7 @@ UsdNotice::ObjectsChanged::PathRange::const_iterator::GetChangedFields() const
 bool 
 UsdNotice::ObjectsChanged::PathRange::const_iterator::HasChangedFields() const
 {
-    for (const SdfChangeList::Entry* entry : base()->second) {
+    for (const SdfChangeList::Entry* entry : _underlyingIterator->second) {
         if (!entry->infoChanged.empty()) {
             return true;
         }
@@ -94,7 +91,22 @@ UsdNotice::ObjectsChanged::PathRange::const_iterator::HasChangedFields() const
     return false;
 }
 
-UsdNotice::ObjectsChanged::~ObjectsChanged() {}
+const UsdNotice::ObjectsChanged::_PathsToChangesMap&
+UsdNotice::ObjectsChanged::_GetEmptyChangesMap()
+{
+    static const _PathsToChangesMap empty;
+    return empty;
+}
+
+UsdNotice::ObjectsChanged::ObjectsChanged(
+    const UsdStageWeakPtr &stage,
+    const _PathsToChangesMap *resyncChanges)
+    : ObjectsChanged(
+        stage, resyncChanges, &_GetEmptyChangesMap(), &_GetEmptyChangesMap())
+{
+}
+
+UsdNotice::ObjectsChanged::~ObjectsChanged() = default;
 
 bool 
 UsdNotice::ObjectsChanged::ResyncedObject(const UsdObject &obj) const 
@@ -108,10 +120,17 @@ UsdNotice::ObjectsChanged::ResyncedObject(const UsdObject &obj) const
 bool 
 UsdNotice::ObjectsChanged::ChangedInfoOnly(const UsdObject &obj) const 
 {
+    return _infoChanges->find(obj.GetPath()) != _infoChanges->end();
+}
+
+bool 
+UsdNotice::ObjectsChanged::ResolvedAssetPathsResynced(
+    const UsdObject &obj) const 
+{
     // XXX: We don't need the longest prefix here, we just need to know if
     // a prefix exists in the map.
     return SdfPathFindLongestPrefix(
-        *_infoChanges, obj.GetPath()) != _infoChanges->end();
+        *_assetPathChanges, obj.GetPath()) != _assetPathChanges->end();
 }
 
 UsdNotice::ObjectsChanged::PathRange
@@ -124,6 +143,12 @@ UsdNotice::ObjectsChanged::PathRange
 UsdNotice::ObjectsChanged::GetChangedInfoOnlyPaths() const
 {
     return PathRange(_infoChanges);
+}
+
+UsdNotice::ObjectsChanged::PathRange
+UsdNotice::ObjectsChanged::GetResolvedAssetPathsResyncedPaths() const
+{
+    return PathRange(_assetPathChanges);
 }
 
 TfTokenVector 

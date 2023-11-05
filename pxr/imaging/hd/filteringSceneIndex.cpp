@@ -27,13 +27,39 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+// This is a fallback scene index that we use in case an invalid sceneIndex is
+// passed in to the filtering scene index c'tor.
+class _NoOpSceneIndex final : public HdSceneIndexBase
+{
+public:
+    static HdSceneIndexBaseRefPtr New()
+    {
+        return TfCreateRefPtr(new _NoOpSceneIndex());
+    }
+
+    HdSceneIndexPrim GetPrim(const SdfPath& primPath) const override final
+    {
+        return { TfToken(), nullptr };
+    }
+
+    SdfPathVector
+    GetChildPrimPaths(const SdfPath& priMPath) const override final
+    {
+        return {};
+    }
+};
+
 HdSingleInputFilteringSceneIndexBase::HdSingleInputFilteringSceneIndexBase(
-        const HdSceneIndexBaseRefPtr &inputSceneIndex)
-: _inputSceneIndex(inputSceneIndex)
-, _observer(this)
+    const HdSceneIndexBaseRefPtr& inputSceneIndex)
+    : _inputSceneIndex(inputSceneIndex)
+    , _observer(this)
 {
     if (inputSceneIndex) {
         inputSceneIndex->AddObserver(HdSceneIndexObserverPtr(&_observer));
+    }
+    else {
+        TF_CODING_ERROR("Invalid input sceneIndex.");
+        _inputSceneIndex = _NoOpSceneIndex::New();
     }
 }
 
@@ -41,6 +67,19 @@ std::vector<HdSceneIndexBaseRefPtr>
 HdSingleInputFilteringSceneIndexBase::GetInputScenes() const
 {
     return {_inputSceneIndex};
+}
+
+void HdSingleInputFilteringSceneIndexBase::_PrimsRenamed(
+        const HdSceneIndexBase &sender,
+        const HdSceneIndexObserver::RenamedPrimEntries &entries)
+{
+    HdSceneIndexObserver::RemovedPrimEntries removed;
+    HdSceneIndexObserver::AddedPrimEntries added;
+    HdSceneIndexObserver::ConvertPrimsRenamedToRemovedAndAdded(
+        sender, entries, &removed, &added);
+
+    _PrimsRemoved(sender, removed);
+    _PrimsAdded(sender, added);
 }
 
 void
@@ -66,5 +105,14 @@ HdSingleInputFilteringSceneIndexBase::_Observer::PrimsDirtied(
 {
     _owner->_PrimsDirtied(sender, entries);
 }
+
+void
+HdSingleInputFilteringSceneIndexBase::_Observer::PrimsRenamed(
+    const HdSceneIndexBase &sender,
+    const HdSceneIndexObserver::RenamedPrimEntries &entries)
+{
+    _owner->_PrimsRenamed(sender, entries);
+}
+
 
 PXR_NAMESPACE_CLOSE_SCOPE

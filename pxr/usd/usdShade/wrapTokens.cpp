@@ -67,6 +67,7 @@ void wrapUsdShadeTokens()
     _AddToken(cls, "allPurpose", UsdShadeTokens->allPurpose);
     _AddToken(cls, "bindMaterialAs", UsdShadeTokens->bindMaterialAs);
     _AddToken(cls, "coordSys", UsdShadeTokens->coordSys);
+    _AddToken(cls, "coordSys_MultipleApplyTemplate_Binding", UsdShadeTokens->coordSys_MultipleApplyTemplate_Binding);
     _AddToken(cls, "displacement", UsdShadeTokens->displacement);
     _AddToken(cls, "fallbackStrength", UsdShadeTokens->fallbackStrength);
     _AddToken(cls, "full", UsdShadeTokens->full);
@@ -94,4 +95,11 @@ void wrapUsdShadeTokens()
     _AddToken(cls, "universalSourceType", UsdShadeTokens->universalSourceType);
     _AddToken(cls, "volume", UsdShadeTokens->volume);
     _AddToken(cls, "weakerThanDescendants", UsdShadeTokens->weakerThanDescendants);
+    _AddToken(cls, "ConnectableAPI", UsdShadeTokens->ConnectableAPI);
+    _AddToken(cls, "CoordSysAPI", UsdShadeTokens->CoordSysAPI);
+    _AddToken(cls, "Material", UsdShadeTokens->Material);
+    _AddToken(cls, "MaterialBindingAPI", UsdShadeTokens->MaterialBindingAPI);
+    _AddToken(cls, "NodeDefAPI", UsdShadeTokens->NodeDefAPI);
+    _AddToken(cls, "NodeGraph", UsdShadeTokens->NodeGraph);
+    _AddToken(cls, "Shader", UsdShadeTokens->Shader);
 }

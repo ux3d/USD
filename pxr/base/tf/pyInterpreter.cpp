@@ -67,6 +67,9 @@ TfPyInitialize()
 
     if (!Py_IsInitialized()) {
 
+        // Starting with Python 3.7, the GIL is initialized as part of
+        // Py_Initialize(). Python 3.9 deprecated explicit GIL initialization.
+#if PY_VERSION_HEX < 0x03070000
         if (!ArchIsMainThread() && !PyEval_ThreadsInitialized()) {
             // Python claims that PyEval_InitThreads "should be called in the
             // main thread before creating a second thread or engaging in any
@@ -74,27 +77,14 @@ TfPyInitialize()
             TF_WARN("Calling PyEval_InitThreads() for the first time outside "
                     "the 'main thread'.  Python doc says not to do this.");
         }
+#endif
 
         const std::string s = ArchGetExecutablePath();
 
-#if PY_MAJOR_VERSION == 2
-        // In Python 2 it is safe to call this before Py_Initialize(), but this
-        // is no longer true in python 3.
-        //
-        // Initialize Python threading.  This grabs the GIL.  We'll release it
-        // at the end of this function.
-        PyEval_InitThreads();
-#endif
-
         // Setting the program name is necessary in order for python to 
         // find the correct built-in modules. 
-#if PY_MAJOR_VERSION == 2
-        static std::string programName(s.begin(), s.end());
-        Py_SetProgramName(const_cast<char*>(programName.c_str()));
-#else
         static std::wstring programName(s.begin(), s.end());
         Py_SetProgramName(const_cast<wchar_t*>(programName.c_str()));
-#endif
 
         // We're here when this is a C++ program initializing python (i.e. this
         // is a case of "embedding" a python interpreter, as opposed to
@@ -113,22 +103,18 @@ TfPyInitialize()
         sigaction(SIGINT, &origSigintHandler, NULL);
 #endif
 
-#if PY_MAJOR_VERSION > 2
-        // In python 3 PyEval_InitThreads must be called after Py_Initialize()
-        // see https://docs.python.org/3/c-api/init.html
+#if PY_MAJOR_VERSION == 3 && PY_VERSION_HEX < 0x03070000
+        // In Python 3 (before 3.7), PyEval_InitThreads must be called
+        // after Py_Initialize().
+        // see https://docs.python.org/3/c-api/init.html#c.PyEval_InitThreads
         //
         // Initialize Python threading.  This grabs the GIL.  We'll release it
         // at the end of this function.
         PyEval_InitThreads();
 #endif
 
-#if PY_MAJOR_VERSION == 2
-        char emptyArg[] = {'\0'};
-        char *empty[] = { emptyArg };
-#else
         wchar_t emptyArg[] = { '\0' };
         wchar_t *empty[] = { emptyArg };
-#endif
         PySys_SetArgv(1, empty);
 
         // Kick the module loading mechanism for any loaded libs that have

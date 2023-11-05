@@ -23,17 +23,22 @@
 //
 #include "pxr/usdImaging/usdImaging/primAdapter.h"
 
+#include "pxr/usdImaging/usdImaging/dataSourcePrim.h"
 #include "pxr/usdImaging/usdImaging/debugCodes.h"
 #include "pxr/usdImaging/usdImaging/delegate.h"
 #include "pxr/usdImaging/usdImaging/indexProxy.h"
+#include "pxr/usdImaging/usdImaging/primvarUtils.h"
 #include "pxr/usdImaging/usdImaging/resolvedAttributeCache.h"
 #include "pxr/usdImaging/usdImaging/instancerContext.h"
 
 #include "pxr/usd/sdf/schema.h"
 #include "pxr/usd/usd/collectionAPI.h"
 #include "pxr/usd/usdGeom/primvarsAPI.h"
+#include "pxr/usd/usdLux/lightAPI.h"
+#include "pxr/usd/usdLux/lightFilter.h"
 #include "pxr/usd/usdRender/settingsBase.h"
 
+#include "pxr/imaging/hd/light.h"
 #include "pxr/imaging/hd/perfLog.h"
 #include "pxr/imaging/hd/renderDelegate.h"
 
@@ -90,7 +95,7 @@ UsdImagingPrimAdapter::~UsdImagingPrimAdapter()
 }
 
 TfTokenVector
-UsdImagingPrimAdapter::GetImagingSubprims()
+UsdImagingPrimAdapter::GetImagingSubprims(UsdPrim const& prim)
 {
     TF_WARN("Datasource support not yet added for adapter '%s'",
             TfType::GetCanonicalTypeName(typeid(*this)).c_str());
@@ -98,15 +103,16 @@ UsdImagingPrimAdapter::GetImagingSubprims()
 }
 
 TfToken
-UsdImagingPrimAdapter::GetImagingSubprimType(TfToken const& subprim)
+UsdImagingPrimAdapter::GetImagingSubprimType(UsdPrim const& prim,
+    TfToken const& subprim)
 {
     return TfToken();
 }
 
 HdContainerDataSourceHandle
 UsdImagingPrimAdapter::GetImagingSubprimData(
-        TfToken const& subprim,
         UsdPrim const& prim,
+        TfToken const& subprim,
         const UsdImagingDataSourceStageGlobals &stageGlobals)
 {
     return nullptr;
@@ -114,11 +120,39 @@ UsdImagingPrimAdapter::GetImagingSubprimData(
 
 HdDataSourceLocatorSet
 UsdImagingPrimAdapter::InvalidateImagingSubprim(
+        UsdPrim const& prim,
         TfToken const& subprim,
-        TfTokenVector const& properties)
+        TfTokenVector const& properties,
+        const UsdImagingPropertyInvalidationType invalidationType)
 {
+    if (subprim.IsEmpty()) {
+        return UsdImagingDataSourcePrim::Invalidate(
+            prim, subprim, properties, invalidationType);
+    }
+
     return HdDataSourceLocatorSet();
 }
+
+UsdImagingPrimAdapter::PopulationMode
+UsdImagingPrimAdapter::GetPopulationMode()
+{
+    return RepresentsSelf;
+}
+
+HdDataSourceLocatorSet
+UsdImagingPrimAdapter::InvalidateImagingSubprimFromDescendent(
+        UsdPrim const& prim,
+        UsdPrim const& descendentPrim,
+        TfToken const& subprim,
+        TfTokenVector const& properties,
+        const UsdImagingPropertyInvalidationType invalidationType)
+{
+    return InvalidateImagingSubprim(
+        descendentPrim, subprim, properties, invalidationType);
+}
+
+// ----------------------------------------------------------------------------
+
 
 /*static*/
 bool
@@ -590,6 +624,141 @@ UsdImagingPrimAdapter::GetVolumeFieldDescriptors(UsdPrim const& usdPrim,
     return HdVolumeFieldDescriptorVector();
 }
 
+static VtValue
+_GetUsdPrimAttribute(
+    const UsdPrim& prim,
+    const TfToken& attrName,
+    UsdTimeCode time)
+{
+    VtValue value;
+    if (prim.HasAttribute(attrName)) {
+        UsdAttribute attr = prim.GetAttribute(attrName);
+        attr.Get(&value, time);
+    }
+    return value;
+}
+
+/*static*/
+UsdAttribute
+UsdImagingPrimAdapter::LookupLightParamAttribute(
+    UsdPrim const& prim,
+    TfToken const& paramName)
+{
+    // Fallback to USD attributes.
+    static const std::unordered_map<TfToken, TfToken, TfHash> paramToAttrName({
+        { HdLightTokens->angle, UsdLuxTokens->inputsAngle },
+        { HdLightTokens->color, UsdLuxTokens->inputsColor },
+        { HdLightTokens->colorTemperature, 
+            UsdLuxTokens->inputsColorTemperature },
+        { HdLightTokens->diffuse, UsdLuxTokens->inputsDiffuse },
+        { HdLightTokens->enableColorTemperature, 
+            UsdLuxTokens->inputsEnableColorTemperature },
+        { HdLightTokens->exposure, UsdLuxTokens->inputsExposure },
+        { HdLightTokens->height, UsdLuxTokens->inputsHeight },
+        { HdLightTokens->intensity, UsdLuxTokens->inputsIntensity },
+        { HdLightTokens->length, UsdLuxTokens->inputsLength },
+        { HdLightTokens->normalize, UsdLuxTokens->inputsNormalize },
+        { HdLightTokens->radius, UsdLuxTokens->inputsRadius },
+        { HdLightTokens->specular, UsdLuxTokens->inputsSpecular },
+        { HdLightTokens->textureFile, UsdLuxTokens->inputsTextureFile },
+        { HdLightTokens->textureFormat, UsdLuxTokens->inputsTextureFormat },
+        { HdLightTokens->width, UsdLuxTokens->inputsWidth },
+
+        { HdLightTokens->shapingFocus, UsdLuxTokens->inputsShapingFocus },
+        { HdLightTokens->shapingFocusTint, 
+            UsdLuxTokens->inputsShapingFocusTint },
+        { HdLightTokens->shapingConeAngle, 
+            UsdLuxTokens->inputsShapingConeAngle },
+        { HdLightTokens->shapingConeSoftness, 
+            UsdLuxTokens->inputsShapingConeSoftness },
+        { HdLightTokens->shapingIesFile, UsdLuxTokens->inputsShapingIesFile },
+        { HdLightTokens->shapingIesAngleScale, 
+            UsdLuxTokens->inputsShapingIesAngleScale },
+        { HdLightTokens->shapingIesNormalize, 
+            UsdLuxTokens->inputsShapingIesNormalize },
+        { HdLightTokens->shadowEnable, UsdLuxTokens->inputsShadowEnable },
+        { HdLightTokens->shadowColor, UsdLuxTokens->inputsShadowColor },
+        { HdLightTokens->shadowDistance, UsdLuxTokens->inputsShadowDistance },
+        { HdLightTokens->shadowFalloff, UsdLuxTokens->inputsShadowFalloff },
+        { HdLightTokens->shadowFalloffGamma, 
+            UsdLuxTokens->inputsShadowFalloffGamma }
+    });
+
+    const TfToken *attrName = TfMapLookupPtr(paramToAttrName, paramName);
+
+    if (prim.HasAttribute(attrName ? *attrName : paramName)) {
+        return prim.GetAttribute(attrName ? *attrName : paramName);
+    }
+
+    return UsdAttribute();
+}
+
+VtValue
+UsdImagingPrimAdapter::GetLightParamValue(
+    const UsdPrim& prim,
+    const SdfPath& cachePath,
+    const TfToken& paramName,
+    UsdTimeCode time) const
+{
+    UsdLuxLightAPI light = UsdLuxLightAPI(prim);
+    UsdImaging_CollectionCache& collectionCache = _GetCollectionCache();
+    if (!light) {
+        // Its ok that this is not a light. Lets assume its a light filter.
+        // Asking for the lightFilterType is the render delegates way of
+        // determining the type of the light filter.
+        if (paramName == HdTokens->lightFilterType) {
+            // Use the schema type name from the prim type info which is the
+            // official type of the prim.
+            return VtValue(prim.GetPrimTypeInfo().GetSchemaTypeName());
+        }
+        if (paramName == HdTokens->lightFilterLink) {
+            UsdLuxLightFilter lightFilter = UsdLuxLightFilter(prim);
+            UsdCollectionAPI lightFilterLink =
+                lightFilter.GetFilterLinkCollectionAPI();
+            return VtValue(collectionCache.GetIdForCollection(
+                lightFilterLink));
+        }
+        // fallback to usd attributes
+        return _GetUsdPrimAttribute(prim, paramName, time);
+    }
+
+    if (paramName == HdTokens->lightLink) {
+        UsdCollectionAPI lightLink = light.GetLightLinkCollectionAPI();
+        return VtValue(collectionCache.GetIdForCollection(lightLink));
+    } else if (paramName == HdTokens->filters) {
+        SdfPathVector filterPaths;
+        light.GetFiltersRel().GetForwardedTargets(&filterPaths);
+        return VtValue(filterPaths);
+    } else if (paramName == HdTokens->shadowLink) {
+        UsdCollectionAPI shadowLink = light.GetShadowLinkCollectionAPI();
+        return VtValue(collectionCache.GetIdForCollection(shadowLink));
+    } else if (paramName == HdLightTokens->intensity) {
+        // return 0.0 intensity if scene lights are not enabled
+        if (!_GetSceneLightsEnabled()) {
+            return VtValue(0.0f);
+        }
+
+        // return 0.0 intensity if the scene lights are not visible
+        if (!GetVisible(prim, cachePath, time)) {
+            return VtValue(0.0f);
+        }
+    } else if (paramName == HdTokens->isLight) {
+        return VtValue(!!light);
+    } else if (paramName == HdTokens->materialSyncMode) {
+        VtValue val;
+        light.GetMaterialSyncModeAttr().Get(&val, time);
+        return val;
+    }
+
+    // Fallback to USD attributes.
+    VtValue value;
+    if (UsdAttribute attr = LookupLightParamAttribute(prim, paramName)) {
+        attr.Get(&value, time);
+    }
+
+    return value;
+}
+
 void
 UsdImagingPrimAdapter::SetDelegate(UsdImagingDelegate* delegate)
 {
@@ -725,6 +894,13 @@ UsdImagingPrimAdapter::_GetMaterialRenderContexts() const
         GetMaterialRenderContexts();
 }
 
+TfTokenVector
+UsdImagingPrimAdapter::_GetRenderSettingsNamespaces() const
+{
+    return _delegate->GetRenderIndex().GetRenderDelegate()->
+        GetRenderSettingsNamespaces();
+}
+
 bool 
 UsdImagingPrimAdapter::_GetSceneMaterialsEnabled() const
 {
@@ -789,46 +965,6 @@ UsdImagingPrimAdapter::_RemovePrimvar(
     }
 }
 
-/* static */
-HdInterpolation
-UsdImagingPrimAdapter::_UsdToHdInterpolation(TfToken const& usdInterp)
-{
-    if (usdInterp == UsdGeomTokens->uniform) {
-        return HdInterpolationUniform;
-    } else if (usdInterp == UsdGeomTokens->vertex) {
-        return HdInterpolationVertex;
-    } else if (usdInterp == UsdGeomTokens->varying) {
-        return HdInterpolationVarying;
-    } else if (usdInterp == UsdGeomTokens->faceVarying) {
-        return HdInterpolationFaceVarying;
-    } else if (usdInterp == UsdGeomTokens->constant) {
-        return HdInterpolationConstant;
-    }
-    TF_CODING_ERROR("Unknown USD interpolation %s; treating as constant",
-                    usdInterp.GetText());
-    return HdInterpolationConstant;
-}
-
-/* static */
-TfToken
-UsdImagingPrimAdapter::_UsdToHdRole(TfToken const& usdRole)
-{
-    if (usdRole == SdfValueRoleNames->Point) {
-        return HdPrimvarRoleTokens->point;
-    } else if (usdRole == SdfValueRoleNames->Normal) {
-        return HdPrimvarRoleTokens->normal;
-    } else if (usdRole == SdfValueRoleNames->Vector) {
-        return HdPrimvarRoleTokens->vector;
-    } else if (usdRole == SdfValueRoleNames->Color) {
-        return HdPrimvarRoleTokens->color;
-    } else if (usdRole == SdfValueRoleNames->TextureCoordinate) {
-        return HdPrimvarRoleTokens->textureCoordinate;
-    }
-    // Empty token means no role specified
-    return TfToken();
-}
-
-
 void 
 UsdImagingPrimAdapter::_ComputeAndMergePrimvar(
     UsdPrim const& gprim,
@@ -848,8 +984,8 @@ UsdImagingPrimAdapter::_ComputeAndMergePrimvar(
     // fast as long as we don't touch the returned data.
     if (primvar.Get(&v, time)) {
         HdInterpolation interp = interpOverride ? *interpOverride
-            : _UsdToHdInterpolation(primvar.GetInterpolation());
-        TfToken role = _UsdToHdRole(primvar.GetAttr().GetRoleName());
+            : UsdImagingUsdToHdInterpolation(primvar.GetInterpolation());
+        TfToken role = UsdImagingUsdToHdRole(primvar.GetAttr().GetRoleName());
         TF_DEBUG(USDIMAGING_SHADERS)
             .Msg("UsdImaging: found primvar (%s) %s, interp %s\n",
                  gprim.GetPath().GetText(),
@@ -1098,14 +1234,25 @@ UsdImagingPrimAdapter::GetTransform(UsdPrim const& prim,
     HF_MALLOC_TAG_FUNCTION();
     
     UsdImaging_XformCache &xfCache = _delegate->_xformCache;
+    SdfPath const& xformRoot = xfCache.GetRootPath();
     GfMatrix4d ctm(1.0);
 
-    if (_IsEnabledXformCache() && xfCache.GetTime() == time) {
+    // If the cachePath has the 'coordSys' namespace, it is a coordSys prim
+    // which can point to prims outside the xformRoot. So if 'prim', the
+    // coordSys target, is outside the xformRoot use the identity matrix.
+    std::pair<std::string, bool> isCoordSys = SdfPath::StripPrefixNamespace(
+        cachePath.GetName(), HdPrimTypeTokens->coordSys);
+    if (isCoordSys.second && !prim.GetPath().HasPrefix(xformRoot)) {
+        TF_WARN("Prim associated with '%s' has path <%s> which is not under "
+                "the xformCache root (%s), using the identity matrix.", 
+                cachePath.GetText(), prim.GetPath().GetText(), 
+                xformRoot.GetText());
+    }
+    else if (_IsEnabledXformCache() && xfCache.GetTime() == time) {
         ctm = xfCache.GetValue(prim);
     } else {
         ctm = UsdImaging_XfStrategy::ComputeTransform(
-            prim, xfCache.GetRootPath(), time, 
-            _delegate->_rigidXformOverrides);
+            prim, xformRoot, time, _delegate->_rigidXformOverrides);
     }
 
     return ignoreRootTransform ? ctm : ctm * GetRootTransform();
@@ -1207,12 +1354,11 @@ UsdImagingPrimAdapter::SampleTransform(
     size_t numSamplesToEvaluate = std::min(maxNumSamples, numSamples);
     for (size_t i=0; i < numSamplesToEvaluate; ++i) {
         sampleTimes[i] = timeSamples[i] - time.GetValue();
-        sampleValues[i] = UsdImaging_XfStrategy::ComputeTransform(
-            prim, 
-            _delegate->_xformCache.GetRootPath(), 
-            timeSamples[i],
-            _delegate->_rigidXformOverrides) 
-                * _delegate->_rootXf;
+        sampleValues[i] = 
+            UsdImaging_XfStrategy::ComputeTransform(
+                prim, _delegate->_xformCache.GetRootPath(), timeSamples[i], 
+                _delegate->_rigidXformOverrides) 
+            * _delegate->_rootXf;
     }
 
     // Early out if we can't fit the data in the arrays
@@ -1335,6 +1481,63 @@ TfToken
 UsdImagingPrimAdapter::GetModelDrawMode(UsdPrim const& prim)
 {
     return _delegate->_GetModelDrawMode(prim);
+}
+
+namespace {
+template<typename T>
+T
+_GetAttrValue(UsdAttribute const& attr, T defaultVal) {
+    if (attr) {
+        VtValue val;
+        attr.Get(&val);
+        if (!val.IsEmpty()) {
+            return val.UncheckedGet<T>();
+        }
+    }
+    return defaultVal;
+}
+} // anonymous namespace
+
+HdModelDrawMode
+UsdImagingPrimAdapter::GetFullModelDrawMode(UsdPrim const& prim)
+{
+    HdModelDrawMode modelDrawMode;
+
+    if (!prim.IsModel()) {
+        return modelDrawMode;
+    }
+
+    // Use UsdImagingDelegate methods for consistency of logic.
+    modelDrawMode.drawMode = GetModelDrawMode(prim);
+    modelDrawMode.applyDrawMode = _delegate->_IsDrawModeApplied(prim);
+
+    UsdGeomModelAPI geomModelAPI(prim);
+
+    modelDrawMode.drawModeColor = _GetAttrValue<GfVec3f>(
+        geomModelAPI.GetModelDrawModeColorAttr(), GfVec3f(0.18));
+
+    modelDrawMode.cardGeometry = _GetAttrValue<TfToken>(
+        geomModelAPI.GetModelCardGeometryAttr(), modelDrawMode.cardGeometry);
+
+    modelDrawMode.cardTextureXPos = _GetAttrValue<SdfAssetPath>(
+        geomModelAPI.GetModelCardTextureXPosAttr(), SdfAssetPath());
+    
+    modelDrawMode.cardTextureYPos = _GetAttrValue<SdfAssetPath>(
+        geomModelAPI.GetModelCardTextureYPosAttr(), SdfAssetPath());
+    
+    modelDrawMode.cardTextureZPos = _GetAttrValue<SdfAssetPath>(
+        geomModelAPI.GetModelCardTextureZPosAttr(), SdfAssetPath());
+    
+    modelDrawMode.cardTextureXNeg = _GetAttrValue<SdfAssetPath>(
+        geomModelAPI.GetModelCardTextureXNegAttr(), SdfAssetPath());
+    
+    modelDrawMode.cardTextureYNeg = _GetAttrValue<SdfAssetPath>(
+        geomModelAPI.GetModelCardTextureYNegAttr(), SdfAssetPath());
+    
+    modelDrawMode.cardTextureZNeg = _GetAttrValue<SdfAssetPath>(
+        geomModelAPI.GetModelCardTextureZNegAttr(), SdfAssetPath());  
+
+    return modelDrawMode;
 }
 
 /*virtual*/ 

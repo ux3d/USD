@@ -23,6 +23,7 @@
 //
 
 #include "pxr/pxr.h"
+#include "pxr/base/tf/hash.h"
 #include "pxr/base/tf/pathUtils.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/base/tf/type.h"
@@ -40,8 +41,6 @@
 
 #include "pxr/base/plug/registry.h"
 #include "pxr/base/tf/envSetting.h"
-
-#include <boost/functional/hash.hpp>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -165,11 +164,9 @@ _GetIdentifierForAsset(const SdfAssetPath &asset,
                        const TfToken &subIdentifier,
                        const TfToken &sourceType)
 {
-    size_t h = 0;
-    boost::hash_combine(h, asset);
-    for (const auto &i : metadata) { 
-        boost::hash_combine(h, i.first.GetString());
-        boost::hash_combine(h, i.second);
+    size_t h = TfHash()(asset);
+    for (const auto &i : metadata) {
+        h = TfHash::Combine(h, i.first.GetString(), i.second);
     }
 
     return NdrIdentifier(TfStringPrintf(
@@ -183,11 +180,9 @@ static NdrIdentifier
 _GetIdentifierForSourceCode(const std::string &sourceCode, 
                             const NdrTokenMap &metadata) 
 {
-    size_t h = 0;
-    boost::hash_combine(h, sourceCode);
-    for (const auto &i : metadata) { 
-        boost::hash_combine(h, i.first.GetString());
-        boost::hash_combine(h, i.second);
+    size_t h = TfHash()(sourceCode);
+    for (const auto &i : metadata) {
+        h = TfHash::Combine(h, i.first.GetString(), i.second);
     }
     return NdrIdentifier(std::to_string(h));
 }
@@ -961,8 +956,17 @@ NdrRegistry::_InstantiateParserPlugins(
     const std::string disabledPluginsStr = TfGetEnvSetting(PXR_NDR_DISABLE_PLUGINS);
     const std::set<std::string> disabledPlugins = TfStringTokenizeToSet(disabledPluginsStr, ",");
 
+    // Ensure this list is in a consistent order to ensure stable behavior.
+    // TfType's operator< is not stable across runs, so we sort based on
+    // typename instead.
+    std::vector<TfType> orderedPluginTypes {parserPluginTypes.begin(), parserPluginTypes.end()};
+    std::sort(orderedPluginTypes.begin(), orderedPluginTypes.end(),
+        [](const TfType& a, const TfType& b) {
+            return a.GetTypeName() < b.GetTypeName();
+        });
+
     // Instantiate any parser plugins that were found
-    for (const TfType& parserPluginType : parserPluginTypes) {
+    for (const TfType& parserPluginType : orderedPluginTypes) {
         const std::string& pluginName = parserPluginType.GetTypeName();
         if (disabledPlugins.find(pluginName) != disabledPlugins.end()) {
             TF_DEBUG(NDR_DISCOVERY).Msg(

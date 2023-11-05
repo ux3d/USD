@@ -94,6 +94,7 @@ class AppEventFilter(QtCore.QObject):
         return (isinstance(w, QtWidgets.QLineEdit) or 
                 isinstance(w, QtWidgets.QComboBox) or
                 isinstance(w, QtWidgets.QTextEdit) or
+                isinstance(w, QtWidgets.QPlainTextEdit) or
                 isinstance(w, QtWidgets.QAbstractSlider) or
                 isinstance(w, QtWidgets.QAbstractSpinBox) or
                 isinstance(w, QtWidgets.QWidget) and w.windowModality() in [QtCore.Qt.WindowModal,
@@ -117,7 +118,16 @@ class AppEventFilter(QtCore.QObject):
         
         currFocusWidget = QtWidgets.QApplication.focusWidget()
 
-        if event.type() == QtCore.QEvent.KeyPress:
+        # Check for ShortcutOverride events to ensure we pick up navigation keys
+        # that have been set as shortcuts for QActions. We still want to 
+        # dispatch those to the focus widget as needed.
+        if (event.type() == QtCore.QEvent.ShortcutOverride):
+            if (self.IsNavKey(event.key(), event.modifiers()) and 
+                    self.WantsNavKeys(currFocusWidget)):
+                event.setAccepted(True)
+                return True
+
+        elif (event.type() == QtCore.QEvent.KeyPress):
             key = event.key()
 
             isNavKey = self.IsNavKey(key, event.modifiers())

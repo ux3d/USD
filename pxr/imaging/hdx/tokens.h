@@ -75,6 +75,7 @@ TF_DECLARE_PUBLIC_TOKENS(HdxTokens, HDX_API, HDX_TOKENS);
     (lightTypeSpot)             \
                                 \
     (aovInputTask)              \
+    (boundingBoxTask)           \
     (colorCorrectionTask)       \
     (colorizeSelectionTask)     \
     (drawTargetTask)            \
@@ -134,6 +135,9 @@ TF_DECLARE_PUBLIC_TOKENS(HdxColorChannelTokens, HDX_API,
      * read from the color target and also write into it.
      */                                         \
     (colorIntermediate)                         \
+    /* depthIntermediate functions analogously for depth targets.
+     */                                         \
+    (depthIntermediate)
 
 TF_DECLARE_PUBLIC_TOKENS(HdxAovTokens, HDX_API, 
                          HDX_AOV_TOKENS);

@@ -58,9 +58,12 @@ PXR_NAMESPACE_OPEN_SCOPE
     (UsdPrimvarReader_float3)\
     (UsdPrimvarReader_float4)\
     (UsdPrimvarReader_int)   \
-    (UsdTransform2d)
+    (UsdTransform2d)         \
+    ((stageSceneIndexRepopulate,  "__usdStageSceneIndexRepopulate"))
 
-TF_DECLARE_PUBLIC_TOKENS(UsdImagingTokens, USDIMAGING_API, USDIMAGING_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(
+    UsdImagingTokens,
+    USDIMAGING_API, USDIMAGING_TOKENS);
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

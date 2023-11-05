@@ -76,7 +76,7 @@ protected:
 /// \class HdPrman_VirtualStructResolvingSceneIndexPlugin
 ///
 /// Plugin that provides a scene index that expands "virtual struct"
-/// connections, including evaulation of conditional actions.
+/// connections, including evaluation of conditional actions.
 ///
 /// This plugin is registered with the scene index plugin registry for Prman.
 ///

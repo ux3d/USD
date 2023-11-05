@@ -54,8 +54,6 @@ public:
     virtual std::vector<HdSceneIndexBaseRefPtr> GetInputScenes() const = 0;
 };
 
-
-
 TF_DECLARE_WEAK_AND_REF_PTRS(HdSingleInputFilteringSceneIndexBase);
 
 ///
@@ -63,7 +61,7 @@ TF_DECLARE_WEAK_AND_REF_PTRS(HdSingleInputFilteringSceneIndexBase);
 ///
 /// An abstract base class for a filtering scene index that observes a single 
 /// input scene index.
-/// 
+///
 class HdSingleInputFilteringSceneIndexBase : public HdFilteringSceneIndexBase
 {
 public:
@@ -87,6 +85,16 @@ protected:
             const HdSceneIndexBase &sender,
             const HdSceneIndexObserver::DirtiedPrimEntries &entries) = 0;
 
+    // Base implementation converts prim removed messages.
+    HD_API
+    virtual void _PrimsRenamed(
+            const HdSceneIndexBase &sender,
+            const HdSceneIndexObserver::RenamedPrimEntries &entries);
+
+    /// Returns the input scene.  
+    ///
+    /// It is always safe to call and dereference this return value.  If this
+    /// was constructed with a null scene index, a fallback one will be used.
     const HdSceneIndexBaseRefPtr &_GetInputSceneIndex() const {
         return _inputSceneIndex;
     }
@@ -114,6 +122,10 @@ private:
         void PrimsDirtied(
                 const HdSceneIndexBase &sender,
                 const DirtiedPrimEntries &entries) override;
+
+        void PrimsRenamed(
+                const HdSceneIndexBase &sender,
+                const RenamedPrimEntries &entries) override;
     private:
         HdSingleInputFilteringSceneIndexBase *_owner;
     };

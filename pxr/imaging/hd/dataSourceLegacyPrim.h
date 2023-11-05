@@ -57,6 +57,7 @@ public:
         const SdfPath &id, HdSceneDelegate *sceneDelegate)
     : _id(id), _sceneDelegate(sceneDelegate) {}
 
+    HD_API
     void Invoke(HdExtComputationContext *context);
 
 private:
@@ -77,7 +78,6 @@ class HdDataSourceLegacyPrim : public HdContainerDataSource
 public:
     HD_DECLARE_DATASOURCE(HdDataSourceLegacyPrim);
 
-    bool Has(const TfToken &name) override;
     TfTokenVector GetNames() override;
     HdDataSourceBaseHandle Get(const TfToken &name) override;
 
@@ -96,10 +96,12 @@ private:
 
     HdDataSourceBaseHandle _GetPrimvarsDataSource();
     HdDataSourceBaseHandle _GetExtComputationPrimvarsDataSource();
-    HdDataSourceBaseHandle _GetMaterialBindingDataSource();
+    HdDataSourceBaseHandle _GetMaterialBindingsDataSource();
     HdDataSourceBaseHandle _GetXformDataSource();
     HdDataSourceBaseHandle _GetMaterialDataSource();
+    HdDataSourceBaseHandle _GetIntegratorDataSource();
     HdDataSourceBaseHandle _GetSampleFilterDataSource();
+    HdDataSourceBaseHandle _GetDisplayFilterDataSource();
     HdDataSourceBaseHandle _GetDisplayStyleDataSource();
     HdDataSourceBaseHandle _GetInstancedByDataSource();
     HdDataSourceBaseHandle _GetInstancerTopologyDataSource();
@@ -110,7 +112,9 @@ private:
     HdDataSourceBaseHandle _GetExtentDataSource();
     HdDataSourceBaseHandle _GetCategoriesDataSource();
     HdDataSourceBaseHandle _GetInstanceCategoriesDataSource();
-    HdDataSourceBaseHandle _GetPrmanParamsDataSource();
+
+    bool _IsLight();
+    bool _IsInstanceable();
 
 private:
     SdfPath _id;

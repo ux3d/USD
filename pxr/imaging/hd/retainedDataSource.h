@@ -294,7 +294,7 @@ HdRetainedTypedMultisampledDataSource<T>::GetTypedValue(
 
     const HdSampledDataSource::Time epsilon = 0.0001;
 
-    for (size_t i = 0, e = _sampledValues.count(); i < e; ++i) {
+    for (size_t i = 0, e = _sampledValues.size(); i < e; ++i) {
 
         const HdSampledDataSource::Time & sampleTime = _sampledValues[i].first;
 
@@ -318,7 +318,7 @@ HdRetainedTypedMultisampledDataSource<T>::GetTypedValue(
                 // if it's closer, use it instead of me. In the case of a
                 // tie, use the earlier.
                 const HdSampledDataSource::Time previousDelta =
-                        shutterOffset - _sampledValues[i - 1];
+                        shutterOffset - _sampledValues[i - 1].first;
 
                 if (previousDelta <= delta) {
                     return _sampledValues[i - 1].second;
@@ -327,7 +327,7 @@ HdRetainedTypedMultisampledDataSource<T>::GetTypedValue(
                 }
             }
         } else {
-            if (sampleTime - shutterOffset < epsilon) {
+            if (fabs(sampleTime - shutterOffset) < epsilon) {
                 return _sampledValues[i].second;
             }
         }
@@ -354,7 +354,7 @@ public:
     HD_API
     HdRetainedSmallVectorDataSource(
         size_t count, 
-        HdDataSourceBaseHandle *values);
+        const HdDataSourceBaseHandle *values);
 
     HD_API
     size_t GetNumElements() override;
@@ -375,6 +375,18 @@ HD_DECLARE_DATASOURCE_HANDLES(HdRetainedSmallVectorDataSource);
 HD_API
 HdSampledDataSourceHandle
 HdCreateTypedRetainedDataSource(VtValue const &v);
+
+/// Attempt to make a copy of the given data source using the sample at
+/// time 0.0f if it or a descendant data source is sampled.
+HD_API
+HdDataSourceBaseHandle
+HdMakeStaticCopy(HdDataSourceBaseHandle const &ds);
+
+/// Attempt to make a copy of the given container data source using the sample
+/// at time 0.0f if a descendant data source is sampled.
+HD_API
+HdContainerDataSourceHandle
+HdMakeStaticCopy(HdContainerDataSourceHandle const &ds);
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

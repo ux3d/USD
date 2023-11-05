@@ -51,6 +51,11 @@ PXR_NAMESPACE_OPEN_SCOPE
     static void AtomicStore(AtomicHandle &ptr, const Handle &v) { \
         std::atomic_store(&ptr, v); \
     } \
+    static bool AtomicCompareExchange(AtomicHandle &ptr, \
+                                      AtomicHandle &expected, \
+                                      const Handle &desired) { \
+        return std::atomic_compare_exchange_strong(&ptr, &expected, desired); \
+    } \
     static Handle Cast(const HdDataSourceBase::Handle &v) { \
         return std::dynamic_pointer_cast<type>(v); \
     }
@@ -66,6 +71,14 @@ PXR_NAMESPACE_OPEN_SCOPE
     template <typename ... Args> \
     static Handle New(Args&& ... args) { \
         return Handle(new type(std::forward<Args>(args) ... )); \
+    }
+
+/// HD_DECLARE_DATASOURCE_INITIALIZER_LIST_NEW
+/// Used for declaring a `New` function for datasource types that have a
+/// constructor that takes an initializer_list<T>.
+#define HD_DECLARE_DATASOURCE_INITIALIZER_LIST_NEW(type, T) \
+    static Handle New(std::initializer_list<T> initList) { \
+        return Handle(new type(initList)); \
     }
 
 #define HD_DECLARE_DATASOURCE_HANDLES(type) \
@@ -103,11 +116,6 @@ class HdContainerDataSource : public HdDataSourceBase
 {
 public:
     HD_DECLARE_DATASOURCE_ABSTRACT(HdContainerDataSource);
-
-    /// Returns \c true if the container has a child datasource of the given
-    /// name, in which case \p Get(name) is expected to be non-null. This call
-    /// is expected to be threadsafe.
-    virtual bool Has(const TfToken &name) = 0;
 
     /// Returns the list of names for which \p Get(...) is expected to return
     /// a non-null value. This call is expected to be threadsafe.
@@ -240,13 +248,17 @@ HdGetMergedContributingSampleTimesForInterval(
     std::vector<HdSampledDataSource::Time> * outSampleTimes);
 
 /// Print a datasource to a stream, for debugging/testing.
-void HdDebugPrintDataSource(
+HD_API
+void
+HdDebugPrintDataSource(
     std::ostream &,
     HdDataSourceBaseHandle,
     int indentLevel = 0);
 
 /// Print a datasource to stdout, for debugging/testing
-void HdDebugPrintDataSource(HdDataSourceBaseHandle, int indentLevel = 0);
+HD_API
+void
+HdDebugPrintDataSource(HdDataSourceBaseHandle, int indentLevel = 0);
 
 PXR_NAMESPACE_CLOSE_SCOPE
 

@@ -176,8 +176,10 @@ HdxRenderSetupTask::SyncParams(HdSceneDelegate* delegate,
 
         if (HdStRenderPassState * const hdStRenderPassState =
                     dynamic_cast<HdStRenderPassState*>(renderPassState.get())) {
+
+            // Don't enable multisample for id renders.
             hdStRenderPassState->SetUseAovMultiSample(
-                params.useAovMultiSample);
+                params.useAovMultiSample && !params.enableIdRender);
             hdStRenderPassState->SetResolveAovMultiSample(
                 params.resolveAovMultiSample);
             
@@ -227,24 +229,20 @@ HdxRenderSetupTask::PrepareCamera(HdRenderIndex* renderIndex)
         return;
     } 
 
-    const HdCamera *camera = static_cast<const HdCamera *>(
-        renderIndex->GetSprim(HdPrimTypeTokens->camera, _cameraId));
-    if (!camera) {
-        // We don't require a valid camera to accommodate setup tasks used
-        // solely for specifying the AOV bindings for clearing or resolving the
-        // AOVs. The viewport transform is irrelevant in this scenario as well.
-        return;
-    }
+    const HdCamera * const camera =
+        static_cast<const HdCamera *>(
+            renderIndex->GetSprim(HdPrimTypeTokens->camera, _cameraId));
 
     HdRenderPassStateSharedPtr const &renderPassState =
             _GetRenderPassState(renderIndex);
 
+    renderPassState->SetCamera(camera);
+    renderPassState->SetOverrideWindowPolicy(_overrideWindowPolicy);
+
     if (_framing.IsValid()) {
-        renderPassState->SetCameraAndFraming(
-            camera, _framing, _overrideWindowPolicy);
+        renderPassState->SetFraming(_framing);
     } else {
-        renderPassState->SetCameraAndViewport(
-            camera, _viewport);
+        renderPassState->SetViewport(_viewport);
     }
 }
 

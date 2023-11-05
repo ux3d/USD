@@ -27,8 +27,8 @@
 #include "pxr/pxr.h"
 #include "pxr/usd/sdf/api.h"
 #include "pxr/base/tf/token.h"
+#include "pxr/base/tf/hash.h"
 
-#include <boost/functional/hash.hpp>
 #include <boost/optional/optional_fwd.hpp>
 
 #include <functional>
@@ -162,6 +162,14 @@ public:
     /// Return the item vector identified by \p type.
     SDF_API const ItemVector& GetItems(SdfListOpType type) const;
 
+    /// Returns the effective list of items represented by the operations in
+    /// this list op. This function should be used to determine the final list
+    /// of items added instead of looking at the individual explicit, prepended,
+    /// and appended item lists. 
+    ///
+    /// This is equivalent to calling ApplyOperations on an empty item vector.
+    SDF_API ItemVector GetAppliedItems() const;
+
     SDF_API void SetExplicitItems(const ItemVector &items);
     SDF_API void SetAddedItems(const ItemVector &items);
     SDF_API void SetPrependedItems(const ItemVector &items);
@@ -215,9 +223,15 @@ public:
     /// \p callback is called for every item in all operation vectors.  If the 
     /// returned key is empty then the key is removed, otherwise it's replaced 
     /// with the returned key.
+    /// 
+    /// If \p removeDuplicates is \c true and \p callback returns a key that was
+    /// previously returned for the current operation vector being processed,
+    /// the returned key will be removed.
     ///
     /// Returns true if a change was made, false otherwise.
-    SDF_API bool ModifyOperations(const ModifyCallback& callback);
+    SDF_API
+    bool ModifyOperations(const ModifyCallback& callback,
+                          bool removeDuplicates = false);
 
     /// Replaces the items in the specified operation vector in the range
     /// (index, index + n] with the given \p newItems. If \p newItems is empty
@@ -232,15 +246,15 @@ public:
     void ComposeOperations(const SdfListOp<T>& stronger, SdfListOpType op);
 
     friend inline size_t hash_value(const SdfListOp &op) {
-        size_t h = 0;
-        boost::hash_combine(h, op._isExplicit);
-        boost::hash_combine(h, op._explicitItems);
-        boost::hash_combine(h, op._addedItems);
-        boost::hash_combine(h, op._prependedItems);
-        boost::hash_combine(h, op._appendedItems);
-        boost::hash_combine(h, op._deletedItems);
-        boost::hash_combine(h, op._orderedItems);
-        return h;
+        return TfHash::Combine(
+            op._isExplicit,
+            op._explicitItems,
+            op._addedItems,
+            op._prependedItems,
+            op._appendedItems,
+            op._deletedItems,
+            op._orderedItems
+        );
     }
 
     bool operator==(const SdfListOp<T> &rhs) const {

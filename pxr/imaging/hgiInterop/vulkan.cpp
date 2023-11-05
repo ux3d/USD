@@ -234,7 +234,10 @@ HgiInteropVulkan::CompositeToInterop(
 
     // Convert textures from Vulkan to GL
     _ConvertVulkanTextureToOpenGL(_hgiVulkan, color, &_glColorTex);
-    _ConvertVulkanTextureToOpenGL(_hgiVulkan, depth, &_glDepthTex);
+
+    if (depth) {
+        _ConvertVulkanTextureToOpenGL(_hgiVulkan, depth, &_glDepthTex);
+    }
 
     if (!ARCH_UNLIKELY(_glColorTex)) {
         TF_CODING_ERROR("A valid color texture handle is required.\n");
@@ -317,7 +320,7 @@ HgiInteropVulkan::CompositeToInterop(
     glBlendFuncSeparate(/*srcColor*/GL_ONE,
                         /*dstColor*/GL_ONE_MINUS_SRC_ALPHA,
                         /*srcAlpha*/GL_ONE,
-                        /*dstAlpha*/GL_ONE);
+                        /*dstAlpha*/GL_ONE_MINUS_SRC_ALPHA);
     GLint restoreColorOp, restoreAlphaOp;
     glGetIntegerv(GL_BLEND_EQUATION_RGB, &restoreColorOp);
     glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &restoreAlphaOp);

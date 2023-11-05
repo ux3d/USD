@@ -331,11 +331,14 @@ private:
 
     // Static helper methods
     static
-    std::string _LoadSkinningComputeKernel();
+    std::string _LoadSkinningComputeKernel(const TfToken& kernelKey);
 
     static
-    const std::string& _GetSkinningComputeKernel();
- 
+    const std::string& _GetLBSSkinningComputeKernel();
+
+    static
+    const std::string& _GetDQSSkinningComputeKernel();
+
     // ---------------------------------------------------------------------- //
     /// Handlers for the skinned prim
     // ---------------------------------------------------------------------- //
@@ -414,6 +417,8 @@ private:
         /// Compute animated  bone mesh points.
         VtVec3fArray ComputePoints(UsdTimeCode time) const;
 
+        /// Returns the purpose opinion authored on the skeleton prim or its
+        /// ancestors. If none exists, returns an empty token.
         TfToken ComputePurpose() const;
 
     private:

@@ -88,7 +88,10 @@ private:
     std::map<TfToken, SdfPathVector> _lightIds;
     SdfPathVector _lightIncludePaths;
     SdfPathVector _lightExcludePaths;
-    size_t _numLights;
+    size_t _numLightIds;
+    size_t _maxLights;
+    unsigned _sprimIndexVersion;
+    unsigned _settingsVersion;
 
     // Should be weak ptrs
     HdStSimpleLightingShaderSharedPtr _lightingShader;
@@ -110,6 +113,10 @@ private:
     HdBufferArrayRangeSharedPtr _lightSourcesBar;
     HdBufferArrayRangeSharedPtr _shadowsBar;
     HdBufferArrayRangeSharedPtr _materialBar;
+
+    bool _rebuildLightingBufferSources;
+    bool _rebuildLightAndShadowBufferSources;
+    bool _rebuildMaterialBufferSources;
 
     size_t _AppendLightsOfType(HdRenderIndex &renderIndex,
                                TfTokenVector const &lightTypes,

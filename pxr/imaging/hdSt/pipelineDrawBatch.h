@@ -35,7 +35,8 @@
 PXR_NAMESPACE_OPEN_SCOPE
 
 class HgiCapabilities;
-using HdBindingRequestVector = std::vector<HdBindingRequest>;
+struct HgiIndirectCommands;
+using HdStBindingRequestVector = std::vector<class HdStBindingRequest>;
 
 /// \class HdSt_PipelineDrawBatch
 ///
@@ -50,7 +51,8 @@ class HdSt_PipelineDrawBatch : public HdSt_DrawBatch
 public:
     HDST_API
     HdSt_PipelineDrawBatch(HdStDrawItemInstance * drawItemInstance,
-                           bool const allowGpuFrustumCulling = true);
+                           bool const allowGpuFrustumCulling = true,
+                           bool const allowIndirectCommandEncoding = true);
     HDST_API
     ~HdSt_PipelineDrawBatch() override;
 
@@ -63,6 +65,12 @@ public:
     HDST_API
     void PrepareDraw(
         HgiGraphicsCmds *gfxCmds,
+        HdStRenderPassStateSharedPtr const & renderPassState,
+        HdStResourceRegistrySharedPtr const & resourceRegistry) override;
+
+    /// Encode drawing commands for this batch.
+    HDST_API
+    void EncodeDraw(
         HdStRenderPassStateSharedPtr const & renderPassState,
         HdStResourceRegistrySharedPtr const & resourceRegistry) override;
 
@@ -116,7 +124,7 @@ private:
     protected:
         // _DrawingProgram overrides
         void _GetCustomBindings(
-            HdBindingRequestVector * customBindings,
+            HdStBindingRequestVector * customBindings,
             bool * enableInstanceDraw) const override;
     private:
         bool _useDrawIndexed;
@@ -124,10 +132,14 @@ private:
         size_t _bufferArrayHash;
     };
 
-    _CullingProgram &_GetCullingProgram(
+    void _CreateCullingProgram(
         HdStResourceRegistrySharedPtr const & resourceRegistry);
 
     void _CompileBatch(HdStResourceRegistrySharedPtr const & resourceRegistry);
+    
+    void _PrepareIndirectCommandBuffer(
+        HdStRenderPassStateSharedPtr const & renderPassState,
+        HdStResourceRegistrySharedPtr const & resourceRegistry);
 
     bool _HasNothingToDraw() const;
 
@@ -144,6 +156,11 @@ private:
                 HdStRenderPassStateSharedPtr const & renderPassState,
                 HdStResourceRegistrySharedPtr const & resourceRegistry);
 
+    void _ExecutePTCS(
+            HgiGraphicsCmds *ptcsGfxCmds,
+            HdStRenderPassStateSharedPtr const & renderPassState,
+            HdStResourceRegistrySharedPtr const & resourceRegistry);
+
     void _BeginGPUCountVisibleInstances(
         HdStResourceRegistrySharedPtr const & resourceRegistry);
 
@@ -153,6 +170,8 @@ private:
 
     HdStDispatchBufferSharedPtr _dispatchBuffer;
     HdStDispatchBufferSharedPtr _dispatchBufferCullInput;
+
+    HdStBufferResourceSharedPtr _tessFactorsBuffer;
 
     std::vector<uint32_t> _drawCommandBuffer;
     bool _drawCommandBufferDirty;
@@ -175,10 +194,14 @@ private:
     bool _useGpuCulling;
     bool _useInstanceCulling;
     bool const _allowGpuFrustumCulling;
+    bool const _allowIndirectCommandEncoding;
 
     size_t _instanceCountOffset;
     size_t _cullInstanceCountOffset;
+    size_t _drawCoordOffset;
     size_t _patchBaseVertexByteOffset;
+    
+    std::unique_ptr<HgiIndirectCommands> _indirectCommands;
 };
 
 

@@ -43,6 +43,24 @@ UsdImagingRectLightAdapter::~UsdImagingRectLightAdapter()
 {
 }
 
+TfTokenVector
+UsdImagingRectLightAdapter::GetImagingSubprims(UsdPrim const& prim)
+{
+    return { TfToken() };
+}
+
+TfToken
+UsdImagingRectLightAdapter::GetImagingSubprimType(
+    UsdPrim const& prim,
+    TfToken const& subprim)
+{
+    if (subprim.IsEmpty()) {
+        return HdPrimTypeTokens->rectLight;
+    }
+
+    return TfToken();
+}
+
 bool
 UsdImagingRectLightAdapter::IsSupported(UsdImagingIndexProxy const* index) const
 {
@@ -55,19 +73,14 @@ UsdImagingRectLightAdapter::Populate(UsdPrim const& prim,
                             UsdImagingIndexProxy* index,
                             UsdImagingInstancerContext const* instancerContext)
 {
-    index->InsertSprim(HdPrimTypeTokens->rectLight, prim.GetPath(), prim);
-    HD_PERF_COUNTER_INCR(UsdImagingTokens->usdPopulatedPrimCount);
-    _RegisterLightCollections(prim);
-
-    return prim.GetPath();
+    return _AddSprim(HdPrimTypeTokens->rectLight, prim, index, instancerContext);
 }
 
 void
 UsdImagingRectLightAdapter::_RemovePrim(SdfPath const& cachePath,
                                          UsdImagingIndexProxy* index)
 {
-    _UnregisterLightCollections(cachePath);
-    index->RemoveSprim(HdPrimTypeTokens->rectLight, cachePath);
+    _RemoveSprim(HdPrimTypeTokens->rectLight, cachePath, index);
 }
 
 

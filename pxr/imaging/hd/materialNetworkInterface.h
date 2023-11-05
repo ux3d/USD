@@ -52,8 +52,22 @@ public:
 
     virtual SdfPath GetMaterialPrimPath() const = 0;
 
+    /// Returns the nearest enclosing model asset name, as described by
+    /// the model schema, or empty string if none is available.
+    virtual std::string GetModelAssetName() const = 0;
+
     virtual TfTokenVector GetNodeNames() const  = 0;
     virtual TfToken GetNodeType(const TfToken &nodeName) const = 0;
+
+    /// Node type info is a collection of data related to the node type, often
+    /// used to determine the node type.
+    ///
+    /// For now, we only have getters for this, as we aren't really intending on
+    /// mutating this in any filter.
+    virtual TfTokenVector
+    GetNodeTypeInfoKeys(const TfToken& nodeName) const = 0;
+    virtual VtValue
+    GetNodeTypeInfoValue(const TfToken& nodeName, const TfToken& key) const = 0;
 
     virtual TfTokenVector GetAuthoredNodeParameterNames(
         const TfToken &nodeName) const = 0;

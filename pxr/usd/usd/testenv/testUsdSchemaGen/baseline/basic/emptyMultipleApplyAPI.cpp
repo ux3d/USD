@@ -24,7 +24,6 @@
 #include "pxr/usd/usdContrived/emptyMultipleApplyAPI.h"
 #include "pxr/usd/usd/schemaRegistry.h"
 #include "pxr/usd/usd/typed.h"
-#include "pxr/usd/usd/tokens.h"
 
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/sdf/assetPath.h"
@@ -38,11 +37,6 @@ TF_REGISTRY_FUNCTION(TfType)
         TfType::Bases< UsdAPISchemaBase > >();
     
 }
-
-TF_DEFINE_PRIVATE_TOKENS(
-    _schemaTokens,
-    (EmptyMultipleApplyAPI)
-);
 
 /* virtual */
 UsdContrivedEmptyMultipleApplyAPI::~UsdContrivedEmptyMultipleApplyAPI()
@@ -64,6 +58,20 @@ UsdContrivedEmptyMultipleApplyAPI
 UsdContrivedEmptyMultipleApplyAPI::Get(const UsdPrim &prim, const TfToken &name)
 {
     return UsdContrivedEmptyMultipleApplyAPI(prim, name);
+}
+
+/* static */
+std::vector<UsdContrivedEmptyMultipleApplyAPI>
+UsdContrivedEmptyMultipleApplyAPI::GetAll(const UsdPrim &prim)
+{
+    std::vector<UsdContrivedEmptyMultipleApplyAPI> schemas;
+    
+    for (const auto &schemaName :
+         UsdAPISchemaBase::_GetMultipleApplyInstanceNames(prim, _GetStaticTfType())) {
+        schemas.emplace_back(prim, schemaName);
+    }
+
+    return schemas;
 }
 
 

@@ -34,6 +34,7 @@
 #include "pxr/imaging/hd/bufferArrayRange.h"
 #include "pxr/imaging/hd/meshUtil.h"
 #include "pxr/imaging/hd/perfLog.h"
+#include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hd/types.h"
 #include "pxr/imaging/hd/vtBufferSource.h"
 
@@ -73,6 +74,7 @@ _CreateResourceBindings(
         bufBind0.bindingIndex = BufferBinding_Primvar;
         bufBind0.resourceType = HgiBindResourceTypeStorageBuffer;
         bufBind0.stageUsage = HgiShaderStageCompute;
+        bufBind0.writable = true;
         bufBind0.offsets.push_back(0);
         bufBind0.buffers.push_back(primvar);
         resourceDesc.buffers.push_back(std::move(bufBind0));
@@ -83,6 +85,7 @@ _CreateResourceBindings(
         bufBind1.bindingIndex = BufferBinding_Quadinfo;
         bufBind1.resourceType = HgiBindResourceTypeStorageBuffer;
         bufBind1.stageUsage = HgiShaderStageCompute;
+        bufBind1.writable = true;
         bufBind1.offsets.push_back(0);
         bufBind1.buffers.push_back(quadrangulateTable);
         resourceDesc.buffers.push_back(std::move(bufBind1));
@@ -569,17 +572,13 @@ HdSt_QuadrangulateComputationGPU::Execute(
         std::static_pointer_cast<HdStBufferArrayRange> (range);
 
     // buffer resources for GPU computation
-    HdBufferResourceSharedPtr primvar_ = range_->GetResource(_name);
-    HdStBufferResourceSharedPtr primvar =
-        std::static_pointer_cast<HdStBufferResource> (primvar_);
+    HdStBufferResourceSharedPtr primvar = range_->GetResource(_name);
 
     HdStBufferArrayRangeSharedPtr quadrangulateTableRange_ =
         std::static_pointer_cast<HdStBufferArrayRange> (quadrangulateTableRange);
 
-    HdBufferResourceSharedPtr quadrangulateTable_ =
-        quadrangulateTableRange_->GetResource();
     HdStBufferResourceSharedPtr quadrangulateTable =
-        std::static_pointer_cast<HdStBufferResource> (quadrangulateTable_);
+        quadrangulateTableRange_->GetResource();
 
     // prepare uniform buffer for GPU computation
     int quadInfoStride = quadInfo->maxNumVert + 2;
@@ -626,9 +625,9 @@ HdSt_QuadrangulateComputationGPU::Execute(
         resourceBindingsInstance.SetValue(rb);
     }
 
-    HgiResourceBindingsSharedPtr const& resourceBindindsPtr =
+    HgiResourceBindingsSharedPtr const& resourceBindingsPtr =
         resourceBindingsInstance.GetValue();
-    HgiResourceBindingsHandle resourceBindings = *resourceBindindsPtr.get();
+    HgiResourceBindingsHandle resourceBindings = *resourceBindingsPtr.get();
 
     // Get or add pipeline in registry.
     HdInstance<HgiComputePipelineSharedPtr> computePipelineInstance =

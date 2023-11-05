@@ -56,6 +56,9 @@ HdxAovInputTask::~HdxAovInputTask()
     if (_depthTexture) {
         _GetHgi()->DestroyTexture(&_depthTexture);
     }
+    if (_depthTextureIntermediate) {
+        _GetHgi()->DestroyTexture(&_depthTextureIntermediate);
+    }
 }
 
 bool
@@ -110,7 +113,14 @@ HdxAovInputTask::Prepare(HdTaskContext* ctx, HdRenderIndex *renderIndex)
     // Create / update the texture that will be used to ping-pong between color
     // targets in tasks that wish to read from and write to the color target.
     if (_aovBuffer) {
-        _UpdateIntermediateTexture(_aovTextureIntermediate, _aovBuffer);
+        _UpdateIntermediateTexture(_aovTextureIntermediate, _aovBuffer,
+                                   HgiTextureUsageBitsColorTarget);
+    }
+
+    // Do the same for the intermediate depth texture.
+    if (_depthBuffer) {
+        _UpdateIntermediateTexture(_depthTextureIntermediate, _depthBuffer,
+                                   HgiTextureUsageBitsDepthTarget);
     }
 }
 
@@ -144,6 +154,7 @@ HdxAovInputTask::Execute(HdTaskContext* ctx)
     ctx->erase(HdAovTokens->color);
     ctx->erase(HdAovTokens->depth);
     ctx->erase(HdxAovTokens->colorIntermediate);
+    ctx->erase(HdxAovTokens->depthIntermediate);
 
     // If the aov is already backed by a HgiTexture we skip creating a new
     // GPU HgiTexture for it and place it directly on the shared task context
@@ -166,6 +177,9 @@ HdxAovInputTask::Execute(HdTaskContext* ctx)
         if (depth.IsHolding<HgiTextureHandle>()) {
             (*ctx)[HdAovTokens->depth] = depth;
         }
+
+        (*ctx)[HdxAovTokens->depthIntermediate] =
+            VtValue(_depthTextureIntermediate);
     }
 
     if (hgiHandleProvidedByAov) {
@@ -177,13 +191,15 @@ HdxAovInputTask::Execute(HdTaskContext* ctx)
     // in the shared task context.
     // The lifetime of this new HgiTexture is managed by this task. 
 
-    _UpdateTexture(ctx, _aovTexture, _aovBuffer);
+    _UpdateTexture(ctx, _aovTexture, _aovBuffer,
+        HgiTextureUsageBitsColorTarget);
     if (_aovTexture) {
         (*ctx)[HdAovTokens->color] = VtValue(_aovTexture);
     }
 
     if (_depthBuffer) {
-        _UpdateTexture(ctx, _depthTexture, _depthBuffer);
+        _UpdateTexture(ctx, _depthTexture, _depthBuffer,
+            HgiTextureUsageBitsDepthTarget);
         if (_depthTexture) {
             (*ctx)[HdAovTokens->depth] = VtValue(_depthTexture);
         }
@@ -194,7 +210,8 @@ void
 HdxAovInputTask::_UpdateTexture(
     HdTaskContext* ctx,
     HgiTextureHandle& texture,
-    HdRenderBuffer* buffer)
+    HdRenderBuffer* buffer,
+    HgiTextureUsageBits usage)
 {
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
@@ -225,6 +242,10 @@ HdxAovInputTask::_UpdateTexture(
         _GetHgi()->SubmitCmds(blitCmds.get());
         buffer->Unmap();
     } else {
+        // Destroy old texture
+        if(texture) {
+            _GetHgi()->DestroyTexture(&texture);
+        }
         // Create a new texture
         HgiTextureDesc texDesc;
         texDesc.debugName = "AovInput Texture";
@@ -238,8 +259,7 @@ HdxAovInputTask::_UpdateTexture(
         texDesc.mipLevels = 1;
         texDesc.pixelsByteSize = dataByteSize;
         texDesc.sampleCount = HgiSampleCount1;
-        texDesc.usage = HgiTextureUsageBitsColorTarget | 
-                        HgiTextureUsageBitsShaderRead;
+        texDesc.usage = usage | HgiTextureUsageBitsShaderRead;
 
         texture = _GetHgi()->CreateTexture(texDesc);
 
@@ -250,7 +270,8 @@ HdxAovInputTask::_UpdateTexture(
 void
 HdxAovInputTask::_UpdateIntermediateTexture(
     HgiTextureHandle& texture,
-    HdRenderBuffer* buffer)
+    HdRenderBuffer* buffer,
+    HgiTextureUsageBits usage)
 {
     GfVec3i dim(
         buffer->GetWidth(),
@@ -267,7 +288,7 @@ HdxAovInputTask::_UpdateIntermediateTexture(
         }
     }
 
-    if (!_aovTextureIntermediate) {
+    if (!texture) {
 
         HgiTextureDesc texDesc;
         texDesc.debugName = "AovInput Intermediate Texture";
@@ -277,8 +298,7 @@ HdxAovInputTask::_UpdateIntermediateTexture(
         texDesc.layerCount = 1;
         texDesc.mipLevels = 1;
         texDesc.sampleCount = HgiSampleCount1;
-        texDesc.usage = HgiTextureUsageBitsColorTarget |
-                        HgiTextureUsageBitsShaderRead;
+        texDesc.usage = usage | HgiTextureUsageBitsShaderRead;
 
         texture = _GetHgi()->CreateTexture(texDesc);
     }

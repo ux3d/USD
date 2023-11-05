@@ -54,7 +54,7 @@ static std::string
 _Repr(const UsdContrivedEmptyMultipleApplyAPI &self)
 {
     std::string primRepr = TfPyRepr(self.GetPrim());
-    std::string instanceName = self.GetName();
+    std::string instanceName = TfPyRepr(self.GetName());
     return TfStringPrintf(
         "UsdContrived.EmptyMultipleApplyAPI(%s, '%s')",
         primRepr.c_str(), instanceName.c_str());
@@ -88,8 +88,8 @@ void wrapUsdContrivedEmptyMultipleApplyAPI()
         cls("EmptyMultipleApplyAPI");
 
     cls
-        .def(init<UsdPrim, TfToken>())
-        .def(init<UsdSchemaBase const&, TfToken>())
+        .def(init<UsdPrim, TfToken>((arg("prim"), arg("name"))))
+        .def(init<UsdSchemaBase const&, TfToken>((arg("schemaObj"), arg("name"))))
         .def(TfTypePythonClass())
 
         .def("Get",
@@ -103,6 +103,13 @@ void wrapUsdContrivedEmptyMultipleApplyAPI()
                &This::Get,
             (arg("prim"), arg("name")))
         .staticmethod("Get")
+
+        .def("GetAll",
+            (std::vector<UsdContrivedEmptyMultipleApplyAPI>(*)(const UsdPrim &prim))
+                &This::GetAll,
+            arg("prim"),
+            return_value_policy<TfPySequenceToList>())
+        .staticmethod("GetAll")
 
         .def("CanApply", &_WrapCanApply, (arg("prim"), arg("name")))
         .staticmethod("CanApply")

@@ -71,6 +71,10 @@ public:
         const HdSceneIndexBase &sender,
         const DirtiedPrimEntries &entries) override;
 
+    void PrimsRenamed(
+        const HdSceneIndexBase &sender,
+        const RenamedPrimEntries &entries) override;
+
     // ------------------------------------------------------------------------
     // HdSceneIndexDelegate API
 
@@ -203,6 +207,13 @@ private:
 
     VtValue _GetPrimvar(SdfPath const &id, TfToken const &key, 
         VtIntArray *outIndices);
+
+    VtValue _GetPrimvar(
+        const HdContainerDataSourceHandle &primvarsDataSource, 
+        TfToken const &key,
+        VtIntArray *outIndices);
+    
+
     size_t _SamplePrimvar(SdfPath const &id, TfToken const &key,
         size_t maxNumSamples, float *times, VtValue *samples, 
         VtIntArray *sampleIndices);

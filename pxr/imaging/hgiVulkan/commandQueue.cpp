@@ -144,10 +144,11 @@ HgiVulkanCommandQueue::SubmitToQueue(
     VkSubmitInfo workInfo = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
     workInfo.commandBufferCount = 1;
     workInfo.pCommandBuffers = &wcb;
+    VkPipelineStageFlags waitMask;
     if (semaphore) {
         workInfo.waitSemaphoreCount = 1;
         workInfo.pWaitSemaphores = &semaphore;
-        VkPipelineStageFlags waitMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        waitMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         workInfo.pWaitDstStageMask = &waitMask;
     }
 
@@ -237,7 +238,7 @@ HgiVulkanCommandQueue::GetVulkanGraphicsQueue() const
 
 /* Single threaded */
 void
-HgiVulkanCommandQueue::ResetConsumedCommandBuffers()
+HgiVulkanCommandQueue::ResetConsumedCommandBuffers(HgiSubmitWaitType wait)
 {
     // Lock the command pool map from concurrent access since we may insert.
     std::lock_guard<std::mutex> guard(_commandPoolsMutex);
@@ -246,7 +247,7 @@ HgiVulkanCommandQueue::ResetConsumedCommandBuffers()
     for (auto it : _commandPools) {
         HgiVulkan_CommandPool* pool = it.second;
         for (HgiVulkanCommandBuffer* cb : pool->commandBuffers) {
-            if (cb->ResetIfConsumedByGPU()) {
+            if (cb->ResetIfConsumedByGPU(wait)) {
                 _SetInflightBit(cb->GetInflightId(), /*enabled*/ false);
             }
         }

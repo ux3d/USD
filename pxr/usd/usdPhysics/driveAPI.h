@@ -147,6 +147,12 @@ public:
     static UsdPhysicsDriveAPI
     Get(const UsdPrim &prim, const TfToken &name);
 
+    /// Return a vector of all named instances of UsdPhysicsDriveAPI on the 
+    /// given \p prim.
+    USDPHYSICS_API
+    static std::vector<UsdPhysicsDriveAPI>
+    GetAll(const UsdPrim &prim);
+
     /// Checks if the given name \p baseName is the base name of a property
     /// of PhysicsDriveAPI.
     USDPHYSICS_API
@@ -328,7 +334,7 @@ public:
     // --------------------------------------------------------------------- //
     /// Damping of the drive. Units: 
     /// if linear drive: mass/second
-    /// If angular drive: mass*DIST_UNITS*DIST_UNITS/second/second/degrees.
+    /// If angular drive: mass*DIST_UNITS*DIST_UNITS/second/degrees.
     ///
     /// | ||
     /// | -- | -- |
@@ -352,7 +358,7 @@ public:
     // --------------------------------------------------------------------- //
     /// Stiffness of the drive. Units:
     /// if linear drive: mass/second/second
-    /// if angular drive: mass*DIST_UNITS*DIST_UNITS/degree/second/second.
+    /// if angular drive: mass*DIST_UNITS*DIST_UNITS/degrees/second/second.
     ///
     /// | ||
     /// | -- | -- |

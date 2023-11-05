@@ -23,26 +23,26 @@
 //
 
 #include "pxr/imaging/hdSt/extComputation.h"
+#include "pxr/imaging/hdSt/extCompComputedInputSource.h"
 #include "pxr/imaging/hdSt/primUtils.h"
 #include "pxr/imaging/hdSt/resourceRegistry.h"
 #include "pxr/imaging/hdSt/renderParam.h"
+
 #include "pxr/imaging/hd/extComputationContext.h"
-#include "pxr/imaging/hd/compExtCompInputSource.h"
 #include "pxr/imaging/hd/perfLog.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/vtBufferSource.h"
 
 #include "pxr/imaging/hgi/capabilities.h"
 
-#include "pxr/base/gf/matrix4f.h"
-
 #include "pxr/base/arch/hash.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+
 HdStExtComputation::HdStExtComputation(SdfPath const &id)
- : HdExtComputation(id)
- , _inputRange()
+    : HdExtComputation(id)
+    , _inputRange()
 {
 }
 
@@ -89,24 +89,6 @@ _AllocateComputationDataRange(
     return inputRange;
 }
 
-static
-HdBufferSourceSharedPtr
-_GetBufferSource(TfToken const &inputName,
-                 VtValue const &inputValue,
-                 size_t arraySize,
-                 bool const convertToFloat)
-{
-    // We should probably expand this to handle other types, but
-    // the initial use case for this conversion is to deal with
-    // transform matrices passed to skinning computations.
-    if (convertToFloat && inputValue.IsHolding<GfMatrix4d>()) {
-        VtValue const floatValue(GfMatrix4f(inputValue.Get<GfMatrix4d>()));
-        return std::make_shared<HdVtBufferSource>(inputName, floatValue, 1);
-    }
-
-    return std::make_shared<HdVtBufferSource>(inputName, inputValue, arraySize);
-}
-
 void
 HdStExtComputation::Sync(HdSceneDelegate *sceneDelegate,
                          HdRenderParam   *renderParam,
@@ -124,7 +106,7 @@ HdStExtComputation::Sync(HdSceneDelegate *sceneDelegate,
     // During Sprim sync, we only commit GPU resources when directly executing a
     // GPU computation or when aggregating inputs for a downstream computation.
     // Note: For CPU computations, we pull the inputs when we create the
-    // HdExtCompCpuComputation, which happens during Rprim sync.
+    // HdStExtCompCpuComputation, which happens during Rprim sync.
     if (GetGpuKernelSource().empty() && !IsInputAggregation()) {
         return;
     }
@@ -142,8 +124,8 @@ HdStExtComputation::Sync(HdSceneDelegate *sceneDelegate,
 
     HgiCapabilities const * capabilities =
         resourceRegistry->GetHgi()->GetCapabilities();
-    bool const convertToFloat =
-        !capabilities->IsSet(HgiDeviceCapabilitiesBitsShaderDoublePrecision);
+    bool const doublesSupported =
+        capabilities->IsSet(HgiDeviceCapabilitiesBitsShaderDoublePrecision);
 
     HdBufferSourceSharedPtrVector inputs;
     for (TfToken const & inputName: GetSceneInputNames()) {
@@ -152,7 +134,8 @@ HdStExtComputation::Sync(HdSceneDelegate *sceneDelegate,
         size_t arraySize =
             inputValue.IsArrayValued() ? inputValue.GetArraySize() : 1;
         HdBufferSourceSharedPtr const inputSource =
-            _GetBufferSource(inputName, inputValue, arraySize, convertToFloat);
+            std::make_shared<HdVtBufferSource>(inputName, inputValue,
+                arraySize, doublesSupported);
         if (inputSource->IsValid()) {
             inputs.push_back(inputSource);
         } else {
@@ -253,4 +236,6 @@ HdStExtComputation::Finalize(HdRenderParam *renderParam)
     HdStMarkGarbageCollectionNeeded(renderParam);
 }
 
+
 PXR_NAMESPACE_CLOSE_SCOPE
+

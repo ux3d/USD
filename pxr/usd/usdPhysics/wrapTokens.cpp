@@ -106,6 +106,7 @@ void wrapUsdPhysicsTokens()
     _AddToken(cls, "physicsFilteredPairs", UsdPhysicsTokens->physicsFilteredPairs);
     _AddToken(cls, "physicsGravityDirection", UsdPhysicsTokens->physicsGravityDirection);
     _AddToken(cls, "physicsGravityMagnitude", UsdPhysicsTokens->physicsGravityMagnitude);
+    _AddToken(cls, "physicsInvertFilteredGroups", UsdPhysicsTokens->physicsInvertFilteredGroups);
     _AddToken(cls, "physicsJointEnabled", UsdPhysicsTokens->physicsJointEnabled);
     _AddToken(cls, "physicsKinematicEnabled", UsdPhysicsTokens->physicsKinematicEnabled);
     _AddToken(cls, "physicsLocalPos0", UsdPhysicsTokens->physicsLocalPos0);
@@ -115,6 +116,7 @@ void wrapUsdPhysicsTokens()
     _AddToken(cls, "physicsLowerLimit", UsdPhysicsTokens->physicsLowerLimit);
     _AddToken(cls, "physicsMass", UsdPhysicsTokens->physicsMass);
     _AddToken(cls, "physicsMaxDistance", UsdPhysicsTokens->physicsMaxDistance);
+    _AddToken(cls, "physicsMergeGroup", UsdPhysicsTokens->physicsMergeGroup);
     _AddToken(cls, "physicsMinDistance", UsdPhysicsTokens->physicsMinDistance);
     _AddToken(cls, "physicsPrincipalAxes", UsdPhysicsTokens->physicsPrincipalAxes);
     _AddToken(cls, "physicsRestitution", UsdPhysicsTokens->physicsRestitution);
@@ -133,4 +135,21 @@ void wrapUsdPhysicsTokens()
     _AddToken(cls, "x", UsdPhysicsTokens->x);
     _AddToken(cls, "y", UsdPhysicsTokens->y);
     _AddToken(cls, "z", UsdPhysicsTokens->z);
+    _AddToken(cls, "PhysicsArticulationRootAPI", UsdPhysicsTokens->PhysicsArticulationRootAPI);
+    _AddToken(cls, "PhysicsCollisionAPI", UsdPhysicsTokens->PhysicsCollisionAPI);
+    _AddToken(cls, "PhysicsCollisionGroup", UsdPhysicsTokens->PhysicsCollisionGroup);
+    _AddToken(cls, "PhysicsDistanceJoint", UsdPhysicsTokens->PhysicsDistanceJoint);
+    _AddToken(cls, "PhysicsDriveAPI", UsdPhysicsTokens->PhysicsDriveAPI);
+    _AddToken(cls, "PhysicsFilteredPairsAPI", UsdPhysicsTokens->PhysicsFilteredPairsAPI);
+    _AddToken(cls, "PhysicsFixedJoint", UsdPhysicsTokens->PhysicsFixedJoint);
+    _AddToken(cls, "PhysicsJoint", UsdPhysicsTokens->PhysicsJoint);
+    _AddToken(cls, "PhysicsLimitAPI", UsdPhysicsTokens->PhysicsLimitAPI);
+    _AddToken(cls, "PhysicsMassAPI", UsdPhysicsTokens->PhysicsMassAPI);
+    _AddToken(cls, "PhysicsMaterialAPI", UsdPhysicsTokens->PhysicsMaterialAPI);
+    _AddToken(cls, "PhysicsMeshCollisionAPI", UsdPhysicsTokens->PhysicsMeshCollisionAPI);
+    _AddToken(cls, "PhysicsPrismaticJoint", UsdPhysicsTokens->PhysicsPrismaticJoint);
+    _AddToken(cls, "PhysicsRevoluteJoint", UsdPhysicsTokens->PhysicsRevoluteJoint);
+    _AddToken(cls, "PhysicsRigidBodyAPI", UsdPhysicsTokens->PhysicsRigidBodyAPI);
+    _AddToken(cls, "PhysicsScene", UsdPhysicsTokens->PhysicsScene);
+    _AddToken(cls, "PhysicsSphericalJoint", UsdPhysicsTokens->PhysicsSphericalJoint);
 }

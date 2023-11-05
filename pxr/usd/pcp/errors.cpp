@@ -24,6 +24,8 @@
 
 #include "pxr/pxr.h"
 #include "pxr/usd/pcp/errors.h"
+
+#include "pxr/base/tf/enum.h"
 #include "pxr/base/tf/stringUtils.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -56,11 +58,12 @@ TF_REGISTRY_FUNCTION(TfEnum) {
     TF_ADD_ENUM_NAME(PcpErrorType_SublayerCycle);
     TF_ADD_ENUM_NAME(PcpErrorType_TargetPermissionDenied);
     TF_ADD_ENUM_NAME(PcpErrorType_UnresolvedPrimPath);
+    TF_ADD_ENUM_NAME(PcpErrorType_VariableExpressionError);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-PcpErrorBase::PcpErrorBase(TfEnum errorType) :
+PcpErrorBase::PcpErrorBase(PcpErrorType errorType) :
     errorType(errorType)
 {
 }
@@ -226,8 +229,8 @@ PcpErrorCapacityExceeded::ToString() const
 ///////////////////////////////////////////////////////////////////////////////
 
 PcpErrorInconsistentPropertyBase::PcpErrorInconsistentPropertyBase(
-    TfEnum errorType) :
-    PcpErrorBase(errorType)
+    PcpErrorType errorType)
+    : PcpErrorBase(errorType)
 {
 }
 
@@ -351,33 +354,6 @@ PcpErrorInconsistentAttributeVariability::ToString() const
 
 ///////////////////////////////////////////////////////////////////////////////
 
-PcpErrorInternalAssetPathPtr
-PcpErrorInternalAssetPath::New()
-{
-    return PcpErrorInternalAssetPathPtr(new PcpErrorInternalAssetPath);
-}
-
-PcpErrorInternalAssetPath::PcpErrorInternalAssetPath() :
-    PcpErrorBase(PcpErrorType_InternalAssetPath)
-{
-}
-
-PcpErrorInternalAssetPath::~PcpErrorInternalAssetPath()
-{
-}
-
-// virtual
-std::string
-PcpErrorInternalAssetPath::ToString() const
-{
-    return TfStringPrintf("Ignoring %s path on prim <%s> because asset @%s@ "
-                          "is internal.",
-                          TfEnum::GetDisplayName(arcType).c_str(), 
-                          site.path.GetText(), resolvedAssetPath.c_str()); 
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
 PcpErrorInvalidPrimPathPtr
 PcpErrorInvalidPrimPath::New()
 {
@@ -397,18 +373,19 @@ PcpErrorInvalidPrimPath::~PcpErrorInvalidPrimPath()
 std::string
 PcpErrorInvalidPrimPath::ToString() const
 {
-    return TfStringPrintf("Invalid %s path <%s> on prim %s "
-                          "-- must be an absolute prim path.", 
+    return TfStringPrintf("Invalid %s path <%s> introduced by %s"
+                          "-- must be an absolute prim path with no "
+                          "variant selections.", 
                           TfEnum::GetDisplayName(arcType).c_str(), 
                           primPath.GetText(),
-                          TfStringify(site).c_str());
+                          TfStringify(PcpSite(sourceLayer, site.path)).c_str());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 PcpErrorInvalidAssetPathBase::PcpErrorInvalidAssetPathBase(
-    TfEnum errorType) :
-    PcpErrorBase(errorType)
+    PcpErrorType errorType)
+    : PcpErrorBase(errorType)
 {
 }
 
@@ -438,10 +415,11 @@ PcpErrorInvalidAssetPath::~PcpErrorInvalidAssetPath()
 std::string
 PcpErrorInvalidAssetPath::ToString() const
 {
-    return TfStringPrintf("Could not open asset @%s@ for %s on prim %s%s%s.",
+    return TfStringPrintf("Could not open asset @%s@ for "
+                          "%s introduced by %s%s%s.",
                           resolvedAssetPath.c_str(), 
                           TfEnum::GetDisplayName(arcType).c_str(), 
-                          TfStringify(site).c_str(),
+                          TfStringify(PcpSite(sourceLayer, site.path)).c_str(),
                           messages.empty() ? "" : " -- ",
                           messages.c_str());
 }
@@ -467,15 +445,15 @@ PcpErrorMutedAssetPath::~PcpErrorMutedAssetPath()
 std::string
 PcpErrorMutedAssetPath::ToString() const
 {
-    return TfStringPrintf("Asset @%s@ was muted for %s on prim %s.",
+    return TfStringPrintf("Asset @%s@ was muted for %s introduced by %s.",
                           resolvedAssetPath.c_str(), 
                           TfEnum::GetDisplayName(arcType).c_str(), 
-                          TfStringify(site).c_str());
+                          TfStringify(PcpSite(sourceLayer, site.path)).c_str());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-PcpErrorTargetPathBase::PcpErrorTargetPathBase(TfEnum errorType)
+PcpErrorTargetPathBase::PcpErrorTargetPathBase(PcpErrorType errorType)
     : PcpErrorBase(errorType)
 {
 }
@@ -641,11 +619,14 @@ PcpErrorInvalidReferenceOffset::~PcpErrorInvalidReferenceOffset()
 std::string
 PcpErrorInvalidReferenceOffset::ToString() const
 {
-    return TfStringPrintf("Invalid reference offset %s at %s on "
-                          "asset path '%s'. Using no offset instead.", 
-                          TfStringify(offset).c_str(),
-                          TfStringify(PcpSite(layer, sourcePath)).c_str(),
-                          assetPath.c_str());
+    return TfStringPrintf(
+        "Invalid %s offset %s for @%s@<%s> introduced by %s. "
+        "Using no offset instead.",
+        TfEnum::GetDisplayName(arcType).c_str(), 
+        TfStringify(offset).c_str(),
+        assetPath.c_str(),
+        targetPath.GetText(),
+        TfStringify(PcpSite(sourceLayer, sourcePath)).c_str());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -709,36 +690,6 @@ PcpErrorInvalidSublayerPath::ToString() const
                                 : "<NULL>",
                           messages.empty() ? "" : " -- ",
                           messages.c_str());
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-PcpErrorInvalidVariantSelectionPtr
-PcpErrorInvalidVariantSelection::New()
-{
-    return PcpErrorInvalidVariantSelectionPtr(
-        new PcpErrorInvalidVariantSelection);
-}
-
-PcpErrorInvalidVariantSelection::PcpErrorInvalidVariantSelection() :
-    PcpErrorBase(PcpErrorType_InvalidVariantSelection)
-{
-}
-
-PcpErrorInvalidVariantSelection::~PcpErrorInvalidVariantSelection()
-{
-}
-
-// virtual
-std::string
-PcpErrorInvalidVariantSelection::ToString() const
-{
-    return TfStringPrintf("Invalid variant selection {%s = %s} at <%s> "
-                          "in @%s@.",
-                          vset.c_str(),
-                          vsel.c_str(),
-                          sitePath.GetText(),
-                          siteAssetPath.c_str());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -916,10 +867,58 @@ PcpErrorUnresolvedPrimPath::~PcpErrorUnresolvedPrimPath()
 std::string
 PcpErrorUnresolvedPrimPath::ToString() const
 {
-    return TfStringPrintf("Unresolved %s path <%s> on prim %s.",
-                          TfEnum::GetDisplayName(arcType).c_str(), 
-                          unresolvedPath.GetText(),
-                          TfStringify(site).c_str());
+    return TfStringPrintf(
+        "Unresolved %s prim path %s introduced by %s",
+        TfEnum::GetDisplayName(arcType).c_str(), 
+        TfStringify(PcpSite(targetLayer, unresolvedPath)).c_str(),
+        TfStringify(PcpSite(sourceLayer, site.path)).c_str());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+PcpErrorVariableExpressionErrorPtr
+PcpErrorVariableExpressionError::New()
+{
+    return PcpErrorVariableExpressionErrorPtr(
+        new PcpErrorVariableExpressionError);
+}
+
+PcpErrorVariableExpressionError::PcpErrorVariableExpressionError()
+    : PcpErrorBase(PcpErrorType_VariableExpressionError)
+{
+}
+
+PcpErrorVariableExpressionError::~PcpErrorVariableExpressionError()
+{
+}
+
+std::string
+PcpErrorVariableExpressionError::ToString() const
+{
+    // Example error messages:
+    // Error evaluating expression "`if(${FOO}, ..."
+    // for sublayer in @foo.sdf@: invalid syntax
+    //
+    // Error evaluating expression "`if(${FOO}, ..."
+    // for reference at </Foo> in @bar.sdf@: invalid syntax
+    auto makeSourceStr = [this]() {
+        std::string result;
+        if (!sourcePath.IsAbsoluteRootPath()) {
+            result += TfStringPrintf(
+                "at %s ", sourcePath.GetAsString().c_str());
+        }
+        result += TfStringPrintf(
+            "in @%s@", 
+            sourceLayer ? sourceLayer->GetIdentifier().c_str() : "<expired>");
+        return result;
+
+    };
+
+    return TfStringPrintf(
+        R"(Error evaluating expression %s for %s %s: %s)",
+        expression.substr(0, 32).c_str(), 
+        context.c_str(), makeSourceStr().c_str(),
+        expressionError.c_str());
 }
 
 ///////////////////////////////////////////////////////////////////////////////

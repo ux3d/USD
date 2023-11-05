@@ -28,9 +28,8 @@
 
 #include "pxr/pxr.h"
 #include "pxr/usd/sdf/api.h"
+#include "pxr/base/tf/hash.h"
 
-#include <boost/functional/hash.hpp>
-#include <boost/operators.hpp>
 #include <iosfwd>
 #include <string>
 
@@ -44,8 +43,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 /// disallowed.  Attempts to construct asset paths with such characters will
 /// issue a TfError and produce the default-constructed empty asset path.
 ///
-class SdfAssetPath:
-    public boost::totally_ordered<SdfAssetPath>
+class SdfAssetPath
 {
 public:
     /// \name Constructors
@@ -81,15 +79,36 @@ public:
                _resolvedPath == rhs._resolvedPath;
     }
 
+    /// Inequality operator
+    /// \sa SdfAssetPath::operator==(const SdfAssetPath&)
+    bool operator!=(const SdfAssetPath& rhs) const {
+        return !(*this == rhs);
+    }
+
     /// Ordering first by asset path, then by resolved path.
     SDF_API bool operator<(const SdfAssetPath &rhs) const;
 
+    /// Less than or equal operator
+    /// \sa SdfAssetPath::operator<(const SdfAssetPath&)
+    bool operator<=(const SdfAssetPath& rhs) const {
+        return !(rhs < *this);
+    }
+
+    /// Greater than operator
+    /// \sa SdfAssetPath::operator<(const SdfAssetPath&)
+    bool operator>(const SdfAssetPath& rhs) const {
+        return rhs < *this;
+    }
+
+    /// Greater than or equal operator
+    /// \sa SdfAssetPath::operator<(const SdfAssetPath&)
+    bool operator>=(const SdfAssetPath& rhs) const {
+        return !(*this < rhs);
+    }
+
     /// Hash function
     size_t GetHash() const {
-        size_t hash = 0;
-        boost::hash_combine(hash, _assetPath);
-        boost::hash_combine(hash, _resolvedPath);
-        return hash;
+        return TfHash::Combine(_assetPath, _resolvedPath);
     }
 
     /// \class Hash
@@ -108,8 +127,13 @@ public:
     /// @{
 
     /// Return the asset path.
-    const std::string &GetAssetPath() const {
+    const std::string &GetAssetPath() const & {
         return _assetPath;
+    }
+
+    /// Overload for rvalues, move out the asset path.
+    std::string GetAssetPath() const && {
+        return std::move(_assetPath);
     }
 
     /// Return the resolved asset path, if any.
@@ -117,8 +141,13 @@ public:
     /// Note that SdfAssetPath carries a resolved path only if its creator
     /// passed one to the constructor.  SdfAssetPath never performs resolution
     /// itself.
-    const std::string &GetResolvedPath() const {
+    const std::string &GetResolvedPath() const & {
         return _resolvedPath;
+    }
+
+    /// Overload for rvalues, move out the asset path.
+    std::string GetResolvedPath() const && {
+        return std::move(_resolvedPath);
     }
 
     /// @}

@@ -61,7 +61,6 @@ TF_REGISTRY_FUNCTION(TfType)
 
 HgiGL::HgiGL()
     : _device(nullptr)
-    , _garbageCollector(this)
     , _frameDepth(0)
 {
     static std::once_flag versionOnce;
@@ -116,9 +115,10 @@ HgiGL::CreateBlitCmds()
 }
 
 HgiComputeCmdsUniquePtr
-HgiGL::CreateComputeCmds()
+HgiGL::CreateComputeCmds(
+    HgiComputeCmdsDesc const& desc)
 {
-    HgiGLComputeCmds* cmds(new HgiGLComputeCmds(_device));
+    HgiGLComputeCmds* cmds(new HgiGLComputeCmds(_device, desc));
     return HgiComputeCmdsUniquePtr(cmds);
 }
 
@@ -258,6 +258,12 @@ HgiGLCapabilities const*
 HgiGL::GetCapabilities() const
 {
     return _capabilities.get();
+}
+
+HgiIndirectCommandEncoder*
+HgiGL::GetIndirectCommandEncoder() const
+{
+    return nullptr;
 }
 
 void

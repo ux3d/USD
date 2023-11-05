@@ -198,9 +198,9 @@ UsdAttribute::HasValue() const
 bool
 UsdAttribute::HasFallbackValue() const
 {
-    SdfAttributeSpecHandle attrDef =
-        _GetStage()->_GetSchemaAttributeSpec(*this);
-    return attrDef && attrDef->HasDefaultValue();
+    UsdPrimDefinition::Attribute attrDef =
+        _GetStage()->_GetSchemaAttribute(*this);
+    return attrDef && attrDef.GetFallbackValue<VtValue>(nullptr);
 }
 
 bool 
@@ -227,6 +227,14 @@ UsdAttribute::GetResolveInfo(UsdTimeCode time) const
 {
     UsdResolveInfo resolveInfo;
     _GetStage()->_GetResolveInfo(*this, &resolveInfo, &time);
+    return resolveInfo;
+}
+
+UsdResolveInfo
+UsdAttribute::GetResolveInfo() const
+{
+    UsdResolveInfo resolveInfo;
+    _GetStage()->_GetResolveInfo(*this, &resolveInfo, nullptr);
     return resolveInfo;
 }
 

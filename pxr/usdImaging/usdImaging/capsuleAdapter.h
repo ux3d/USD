@@ -43,6 +43,11 @@ class UsdImagingCapsuleAdapter : public UsdImagingGprimAdapter {
 public:
     typedef UsdImagingGprimAdapter BaseAdapter;
 
+    // Number of radial segments on a circular cross-section of the capsule.
+    static constexpr size_t numRadial = 10;
+    // Number of divisions along the spine axis for each hemispherical cap.
+    static constexpr size_t numCapAxial = 4;
+
     UsdImagingCapsuleAdapter()
         : UsdImagingGprimAdapter()
     {}
@@ -54,21 +59,24 @@ public:
     // ---------------------------------------------------------------------- //
 
     USDIMAGING_API
-    TfTokenVector GetImagingSubprims() override;
+    TfTokenVector GetImagingSubprims(UsdPrim const& prim) override;
 
     USDIMAGING_API
-    TfToken GetImagingSubprimType(TfToken const& subprim) override;
+    TfToken GetImagingSubprimType(UsdPrim const& prim, TfToken const& subprim)
+        override;
 
     USDIMAGING_API
     HdContainerDataSourceHandle GetImagingSubprimData(
-            TfToken const& subprim,
             UsdPrim const& prim,
+            TfToken const& subprim,
             const UsdImagingDataSourceStageGlobals &stageGlobals) override;
 
     USDIMAGING_API
     HdDataSourceLocatorSet InvalidateImagingSubprim(
+        UsdPrim const& prim,
         TfToken const& subprim,
-        TfTokenVector const& properties) override;
+        TfTokenVector const& properties,
+        UsdImagingPropertyInvalidationType invalidationType) override;
 
     // ---------------------------------------------------------------------- //
     /// \name Initialization
@@ -86,7 +94,7 @@ public:
     USDIMAGING_API
     HdDirtyBits ProcessPropertyChange(UsdPrim const& prim,
                                       SdfPath const& cachePath,
-                                      TfToken const& propertyName);
+                                      TfToken const& propertyName) override;
 
     // ---------------------------------------------------------------------- //
     /// \name Parallel Setup and Resolve
@@ -116,13 +124,6 @@ public:
     VtValue GetPoints(
         UsdPrim const& prim,
         UsdTimeCode time) const override;
-
-    USDIMAGING_API
-    static VtValue GetMeshPoints(UsdPrim const& prim, 
-                                 UsdTimeCode time);
-    
-    USDIMAGING_API
-    static VtValue GetMeshTopology();
 };
 
 

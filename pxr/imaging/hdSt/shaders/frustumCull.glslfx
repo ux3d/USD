@@ -203,6 +203,7 @@ void main()
         ["mat4", "cullMatrix"],
         ["vec2", "drawRangeNDC"],
         ["uint", "drawCommandNumUints"],
+        ["uint",  "drawBatchId"],
         ["int",  "resetPass"]
     ],
     ["buffer readWrite", "DispatchBuffer", "dispatchBuffer",
@@ -277,6 +278,10 @@ void main()
         // are clearing same field to zero, and and so might not guard this
         // access as atomic.
         ATOMIC_STORE(drawCommands[instanceCountBufferOffset], 0);
+
+        // Sets first value of culledInstancesIndices to 0.
+        ATOMIC_STORE(culledInstanceIndices[GetBaseInstanceIndexCoord()], 0);
+
         return;
     }
 
@@ -293,11 +298,168 @@ void main()
         toClip, localMin, localMax, drawRangeNDC);
 
     if (isVisible) {
-        // increment the instance count and store instanceIndex to culledInstanceIndices.
+        // increment the instance count and store instanceIndex to 
+        // culledInstanceIndices.
 
         uint id = ATOMIC_ADD(drawCommands[instanceCountBufferOffset], 1);
 
+        // There is a potential correctness issue that happens when an instanced
+        // prim has geom subsets, resulting in multiple draw items with the same
+        // instanceIndices and culledInstanceIndices buffers (as we do not 
+        // duplicate these buffers for geom subset draw items). These geom 
+        // subset draw items will each try to read and write from the same 
+        // instanceIndices and culledInstanceIndices buffers from different
+        // threads of this shader. Given the potential difference in execution 
+        // order of the different threads, which each corresponding to a 
+        // different instance id, this can result in incorrect
+        // culledInstanceIndices.
+        // 
+        // To guard against this, we only allow one of these geom subset draw 
+        // items to write to the culledInstanceIndices buffer, by adding an 
+        // extra value at the start of culledInstanceIndices where we store
+        // the xor of the drawCommandIndex and drawBatchId for the first thread 
+        // to complete the atomic op below. Only this thread will be allowed to
+        // edit the culledInstanceIndices buffer.
+        int hash = drawCommandIndex ^ int(drawBatchId);
+
+        // XXX: There is a linking error in OpenGL when using atomicCompSwap 
+        // on bindless buffer culledInstanceIndices using the else case method.
+        // Thus we add this alternative.
+#ifdef HD_BINDLESS_BUFFERS_ENABLED
+        ATOMIC_COMP_SWAP(
+            culledInstanceIndices + GetBaseInstanceIndexCoord(), 0, hash);
+#else
+        ATOMIC_COMP_SWAP(
+            culledInstanceIndices[GetBaseInstanceIndexCoord()], 0, hash);
+#endif
+        
+        if (culledInstanceIndices[GetBaseInstanceIndexCoord()] != hash) {
+            return;
+        }
+
         SetCulledInstanceIndex(id);
         FrustumCullCountVisibleInstances(1);
+    }
+}
+
+
+--- --------------------------------------------------------------------------
+-- layout ViewFrustumCull.Compute
+
+[
+    ["uniform block", "Uniforms", "ulocCullParams",
+        ["mat4", "cullMatrix"],
+        ["vec2", "drawRangeNDC"],
+        ["uint", "drawCommandNumUints"]
+    ],
+    ["buffer readOnly", "DrawCullInput", "drawCullInput",
+        ["uint", "drawCullInput", "[]"]
+    ],
+    ["buffer readWrite", "DispatchBuffer", "dispatchBuffer",
+        ["uint", "drawCommands", "[]"]
+    ]
+]
+
+--- --------------------------------------------------------------------------
+-- glsl ViewFrustumCull.Compute
+
+MAT4 GetCullMatrix()
+{
+    return MAT4(cullMatrix);
+}
+
+void compute(int drawCommandIndex)
+{
+    SetDrawIndex(drawCommandIndex, 0);
+
+    // instanceCountOffset is a relative offset in drawcommand struct.
+    // it's a second entry in both DrawArraysCommand and DrawElementsCommand.
+    const uint instanceCountOffset = 1;
+
+    MAT4 transform = HdGet_transform();
+    MAT4 toClip = GetCullMatrix() * transform;
+
+    vec4 localMin = HdGet_bboxLocalMin();
+    vec4 localMax = HdGet_bboxLocalMax();
+
+    bool isVisible = FrustumCullIsVisible(
+        toClip, localMin, localMax, drawRangeNDC);
+
+    // Compute the index to the 'instanceCount' struct member in drawCommands.
+    uint instanceIndex = uint(drawCommandIndex) *
+        drawCommandNumUints + instanceCountOffset;
+
+    // Set the resulting instance count to 0 if the primitive is culled
+    // otherwise pass through the original incoming instance count.
+    uint resultInstanceCount = drawCullInput[instanceIndex] * uint(isVisible);
+    drawCommands[instanceIndex] = resultInstanceCount;
+
+    FrustumCullCountVisibleInstances(int(resultInstanceCount));
+}
+
+--- --------------------------------------------------------------------------
+-- layout ViewFrustumCull.ComputeInstancing
+
+[
+    ["uniform block", "Uniforms", "ulocCullParams",
+        ["mat4", "cullMatrix"],
+        ["vec2", "drawRangeNDC"],
+        ["uint", "drawCommandNumUints"]
+    ],
+    ["buffer readOnly", "DrawCullInput", "drawCullInput",
+        ["uint", "drawCullInput", "[]"]
+    ],
+    ["buffer readWrite", "DispatchBuffer", "dispatchBuffer",
+        ["uint", "drawCommands", "[]"]
+    ]
+]
+
+--- --------------------------------------------------------------------------
+-- glsl ViewFrustumCull.ComputeInstancing
+
+MAT4 GetCullMatrix()
+{
+    return MAT4(cullMatrix);
+}
+
+void compute(int drawCommandIndex)
+{
+    SetDrawIndex(drawCommandIndex, 0);
+
+    // instanceCountOffset is a relative offset in drawcommand struct.
+    // it's a second entry in both DrawArraysCommand and DrawElementsCommand.
+    const uint instanceCountOffset = 1;
+
+    const uint instanceCountBufferOffset =
+        drawCommandIndex * drawCommandNumUints + instanceCountOffset;
+
+    const uint instanceCount = drawCullInput[instanceCountBufferOffset];
+
+    vec4 localMin = HdGet_bboxLocalMin();
+    vec4 localMax = HdGet_bboxLocalMax();
+    MAT4 transform = HdGet_transform();
+
+    // Reset the instance count.
+    drawCommands[instanceCountBufferOffset] = 0;
+
+    for (int i = 0; i < instanceCount; ++i)
+    {
+        SetDrawIndex(drawCommandIndex, i);
+
+        MAT4 toClip = GetCullMatrix() * ApplyInstanceTransform(transform);
+
+        bool isVisible = FrustumCullIsVisible(
+            toClip, localMin, localMax, drawRangeNDC);
+
+        if (isVisible) {
+            // Increment the instance count and store instanceIndex to
+            // culledInstanceIndices.
+            uint id = drawCommands[instanceCountBufferOffset];
+
+            drawCommands[instanceCountBufferOffset] += 1;
+
+            SetCulledInstanceIndex(id);
+            FrustumCullCountVisibleInstances(1);
+        }
     }
 }

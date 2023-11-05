@@ -49,6 +49,22 @@ if (${PXR_STRICT_BUILD_MODE})
     set(_PXR_CXX_FLAGS "${_PXR_CXX_FLAGS} /WX")
 endif()
 
+# The Visual Studio preprocessor does not conform to the C++ standard,
+# resulting in warnings like:
+#
+#     warning C4003: not enough arguments for function-like macro invocation '_TF_PP_IS_PARENS'
+#
+# These warnings are harmless and can be ignored. They affect a number of
+# code sites that tricky to guard with individual pragmas, so we opt to
+# disable them throughout the build here.
+#
+# Note that these issues are apparently fixed with the "new" preprocessor
+# present in Visual Studio 2019 version 16.5. If/when we enable that option,
+# we should revisit this.
+#
+# https://developercommunity.visualstudio.com/t/standard-conforming-preprocessor-invalid-warning-c/364698
+_disable_warning("4003")
+
 # truncation from 'double' to 'float' due to matrix and vector classes in `Gf`
 _disable_warning("4244")
 _disable_warning("4305")
@@ -98,6 +114,10 @@ _add_define("YY_NO_UNISTD_H")
 if (NOT Boost_USE_STATIC_LIBS)
     _add_define("BOOST_ALL_DYN_LINK")
 endif()
+
+# Suppress automatic boost linking via pragmas, as we must not rely on
+# a heuristic, but upon the tool set we have specified in our build.
+_add_define("BOOST_ALL_NO_LIB")
 
 if(${PXR_USE_DEBUG_PYTHON})
     _add_define("BOOST_DEBUG_PYTHON")

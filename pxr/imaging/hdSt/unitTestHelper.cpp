@@ -286,16 +286,16 @@ HdSt_TestLightingShader::Prepare()
 }
 
 static
-HdBindingRequest
+HdStBindingRequest
 _GetBindingRequest(HdBufferArrayRangeSharedPtr lightingBar)
 {
-    return HdBindingRequest(HdBinding::UBO,
-                            _tokens->lighting,
-                            lightingBar,
-                            /*interleaved=*/true,
-                            /*writable=*/false,
-                            /*arraySize=*/1,
-                            /*concatenateNames=*/true);
+    return HdStBindingRequest(HdStBinding::UBO,
+                              _tokens->lighting,
+                              lightingBar,
+                              /*interleaved=*/true,
+                              /*writable=*/false,
+                              /*arraySize=*/1,
+                              /*concatenateNames=*/true);
 }
 
 /* virtual */
@@ -316,7 +316,7 @@ HdSt_TestLightingShader::UnbindResources(const int program,
 
 /*virtual*/
 void
-HdSt_TestLightingShader::AddBindings(HdBindingRequestVector *customBindings)
+HdSt_TestLightingShader::AddBindings(HdStBindingRequestVector *customBindings)
 {
     customBindings->push_back(_GetBindingRequest(_lightingBar));
 }
@@ -604,6 +604,7 @@ HdSt_TextureTestDriver::_CreateTextureBindings(
         HgiTextureBindDesc texBindDesc;
         texBindDesc.bindingIndex = 0;
         texBindDesc.stageUsage = HgiShaderStageFragment;
+        texBindDesc.writable = false;
         texBindDesc.textures.push_back(textureHandle);
         if (samplerHandle) {
             texBindDesc.samplers.push_back(samplerHandle);
@@ -618,6 +619,7 @@ HdSt_TextureTestDriver::_CreateTextureBindings(
         if (desc == resourceDesc) {
             return true;
         }
+        _hgi->DestroyResourceBindings(&_resourceBindings);
     }
 
     _resourceBindings = _hgi->CreateResourceBindings(resourceDesc);

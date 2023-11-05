@@ -28,8 +28,11 @@
 #include "pxr/imaging/hd/api.h"
 #include "pxr/imaging/hd/version.h"
 #include "pxr/base/tf/staticTokens.h"
+#include "pxr/base/tf/envSetting.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+extern HD_API TfEnvSetting<bool> HD_USE_DEPRECATED_INSTANCER_PRIMVAR_NAMES;
 
 #define HD_TOKENS                               \
     (accelerations)                             \
@@ -38,10 +41,11 @@ PXR_NAMESPACE_OPEN_SCOPE
     (bboxLocalMax)                              \
     (bbox)                                      \
     (bezier)                                    \
-    (bSpline)                                   \
+    (bspline)                                   \
     (blurScale)                                 \
     (camera)                                    \
     (catmullRom)                                \
+    (centripetalCatmullRom)                     \
     (collection)                                \
     (computeShader)                             \
     (coordSysBindings)                          \
@@ -77,7 +81,10 @@ PXR_NAMESPACE_OPEN_SCOPE
     (linear)                                    \
     (lightLink)                                 \
     (lightFilterLink)                           \
+    (lightFilterType)                           \
+    (meshLight)                                 \
     (materialParams)                            \
+    (materialSyncMode)                          \
     (nonlinearSampleCount)                      \
     (nonperiodic)                               \
     (normals)                                   \
@@ -87,6 +94,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     (pinned)                                    \
     (points)                                    \
     (pointsIndices)                             \
+    (portals)                                   \
     (power)                                     \
     (preview)                                   \
     (pointsVisibility)                          \
@@ -109,18 +117,38 @@ PXR_NAMESPACE_OPEN_SCOPE
     (transformInverse)                          \
     (velocities)                                \
     (visibility)                                \
-    (widths)
+    (widths)                                    \
+    (isLight)                                   \
+                                                \
+    /* Legacy tokens. */                        \
+                                                \
+    /* bSpline is a legacy alias so that */     \
+    /* render delegates can compile without */  \
+    /* code change. The new token for */        \
+    /* bspline follows USD and has no */        \
+    /* capital letters. */                      \
+    ((bSpline, "bspline"))
 
-#define HD_INSTANCER_TOKENS                     \
-    (culledInstanceIndices)                     \
-    (instancer)                                 \
-    (instancerTransform)                        \
-    (instancerTransformInverse)                 \
-    (instanceIndices)                           \
-    (instanceIndexBase)                         \
-    (instanceTransform)                         \
-    (rotate)                                    \
-    (scale)                                     \
+#define HD_INSTANCER_TOKENS                                \
+    (culledInstanceIndices)                                \
+    (instancer)                                            \
+    (instancerTransform)                                   \
+    (instancerTransformInverse)                            \
+    (instanceIndices)                                      \
+    (instanceIndexBase)                                    \
+                                                           \
+    /* New instance xform tokens */                        \
+    ((instanceTransforms,   "hydra:instanceTransforms"))   \
+    ((instanceRotations,    "hydra:instanceRotations"))    \
+    ((instanceScales,       "hydra:instanceScales"))       \
+    ((instanceTranslations, "hydra:instanceTranslations")) \
+                                                           \
+    /* Deprecated versions of the above */                 \
+    /* To be removed in 2024, along with the */            \
+    /* HD_USE_DEPRECATED_INSTANCER_PRIMVAR_NAMES env var*/ \
+    (instanceTransform)                                    \
+    (rotate)                                               \
+    (scale)                                                \
     (translate)
 
 #define HD_REPR_TOKENS                          \
@@ -141,6 +169,16 @@ PXR_NAMESPACE_OPEN_SCOPE
     (front) \
     (backUnlessDoubleSided) \
     (frontUnlessDoubleSided)
+
+#define HD_MODEL_DRAWMODE_TOKENS                \
+    (inherited)                                 \
+    (origin)                                    \
+    (bounds)                                    \
+    (cards)                                     \
+    ((default_, "default"))                     \
+    (cross)                                     \
+    (box)                                       \
+    (fromTexture)     
 
 #define HD_PERF_TOKENS                          \
     (adjacencyBufSize)                          \
@@ -183,6 +221,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     (uboSize)                                   \
     (vboRelocated)
 
+// XXX Move to hdSt.
 #define HD_SHADER_TOKENS                        \
     (alphaThreshold)                            \
     (clipPlanes)                                \
@@ -195,6 +234,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     (fragmentShader)                            \
     (geometryShader)                            \
     (imageToWorldMatrix)                        \
+    (imageToHorizontallyNormalizedFilmback)     \
     (indicatorColor)                            \
     (lightingBlendAmount)                       \
     (overrideColor)                             \
@@ -204,6 +244,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     (pointSize)                                 \
     (pointSelectedSize)                         \
     (materialTag)                               \
+    (numClipPlanes)                             \
     (tessControlShader)                         \
     (tessEvalShader)                            \
     (postTessControlShader)                     \
@@ -244,18 +285,24 @@ PXR_NAMESPACE_OPEN_SCOPE
 #define HD_OPTION_TOKENS                        \
     (parallelRprimSync)                        
 
-#define HD_PRIMTYPE_TOKENS                      \
+#define HD_RPRIMTYPE_TOKENS                     \
     /* Rprims */                                \
     (capsule)                                   \
+    (capsule_1)                                 \
     (cone)                                      \
     (cube)                                      \
     (cylinder)                                  \
+    (cylinder_1)                                \
     (mesh)                                      \
+    (nurbsPatch)                                \
     (basisCurves)                               \
+    (nurbsCurves)                               \
     (points)                                    \
     (sphere)                                    \
     (volume)                                    \
-                                                \
+    (model)
+
+#define HD_SPRIMTYPE_TOKENS                     \
     /* Sprims */                                \
     (camera)                                    \
     (drawTarget)                                \
@@ -263,7 +310,10 @@ PXR_NAMESPACE_OPEN_SCOPE
     (coordSys)                                  \
     (instancer)                                 \
     (instance)                                  \
+    (integrator)                                \
     (sampleFilter)                              \
+    (displayFilter)                             \
+    (imageShader)                               \
     /* Sprims Lights */                         \
     (simpleLight)                               \
     (cylinderLight)                             \
@@ -272,21 +322,31 @@ PXR_NAMESPACE_OPEN_SCOPE
     (domeLight)                                 \
     (light)                                     \
     (lightFilter)                               \
+    (meshLight)                                 \
     (pluginLight)                               \
     (rectLight)                                 \
     (sphereLight)                               \
     /* Sprims ExtComputations */                \
     (extComputation)                            \
-                                                \
+
+#define HD_BPRIMTYPE_TOKENS                     \
     /* Bprims */                                \
     (renderBuffer)                              \
     (renderSettings)
+
+#define HD_PRIMTYPE_TOKENS                      \
+    HD_RPRIMTYPE_TOKENS                         \
+    HD_SPRIMTYPE_TOKENS                         \
+    HD_BPRIMTYPE_TOKENS                         \
 
 HD_API
 bool HdPrimTypeIsGprim(TfToken const& primType);
 
 HD_API
 bool HdPrimTypeIsLight(TfToken const& primType);
+
+HD_API
+const TfTokenVector &HdLightPrimTypeTokens();
 
 #define HD_PRIMVAR_ROLE_TOKENS                  \
     ((none, ""))                                \
@@ -381,6 +441,7 @@ TfToken HdAovTokensMakeShader(TfToken const& shader);
     (enableShadows)                                   \
     (enableSceneMaterials)                            \
     (enableSceneLights)                               \
+    (domeLightCameraVisibility)                       \
     /* Raytracer sampling settings */                 \
     (convergedVariance)                               \
     (convergedSamplesPerPixel)                        \
@@ -388,6 +449,24 @@ TfToken HdAovTokensMakeShader(TfToken const& shader);
     (threadLimit)                                     \
     /* interactive vs offline */                      \
     (enableInteractive)
+
+#define HD_RENDER_SETTINGS_PRIM_TOKENS                \
+    (active)                                          \
+    (namespacedSettings)                              \
+    (renderProducts)                                  \
+    (includedPurposes)                                \
+    (materialBindingPurposes)                         \
+    (renderingColorSpace)                             \
+    (shutterInterval)
+
+/* Aspect Ratio Conform Policy Tokens used on render settings prims 
+ * Note that these mirror the conform policy tokens in UsdRenderTokens */
+#define HD_ASPECT_RATIO_CONFORM_POLICY                \
+    (adjustApertureWidth)                             \
+    (adjustApertureHeight)                            \
+    (expandAperture)                                  \
+    (cropAperture)                                    \
+    (adjustPixelAspectRatio)                          \
 
 #define HD_RESOURCE_TYPE_TOKENS                       \
     (texture)                                         \
@@ -400,6 +479,8 @@ TF_DECLARE_PUBLIC_TOKENS(HdTokens, HD_API, HD_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdInstancerTokens, HD_API, HD_INSTANCER_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdReprTokens, HD_API, HD_REPR_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdCullStyleTokens, HD_API, HD_CULLSTYLE_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(HdModelDrawModeTokens, HD_API,
+                         HD_MODEL_DRAWMODE_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdPerfTokens, HD_API, HD_PERF_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdShaderTokens, HD_API, HD_SHADER_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdMaterialTagTokens, HD_API, HD_MATERIALTAG_TOKENS);
@@ -408,10 +489,17 @@ TF_DECLARE_PUBLIC_TOKENS(HdMaterialTerminalTokens, HD_API,
 TF_DECLARE_PUBLIC_TOKENS(HdRenderTagTokens, HD_API, HD_RENDERTAG_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdRenderContextTokens, HD_API, HD_RENDER_CONTEXT_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdOptionTokens, HD_API, HD_OPTION_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(HdRprimTypeTokens, HD_API, HD_RPRIMTYPE_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(HdSprimTypeTokens, HD_API, HD_SPRIMTYPE_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(HdBprimTypeTokens, HD_API, HD_BPRIMTYPE_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdPrimTypeTokens, HD_API, HD_PRIMTYPE_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdPrimvarRoleTokens, HD_API, HD_PRIMVAR_ROLE_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdAovTokens, HD_API, HD_AOV_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdRenderSettingsTokens, HD_API, HD_RENDER_SETTINGS_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(HdRenderSettingsPrimTokens, HD_API,
+                         HD_RENDER_SETTINGS_PRIM_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(HdAspectRatioConformPolicyTokens, HD_API, 
+                         HD_ASPECT_RATIO_CONFORM_POLICY);
 TF_DECLARE_PUBLIC_TOKENS(HdResourceTypeTokens, HD_API, HD_RESOURCE_TYPE_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdSceneIndexEmulationTokens, HD_API, 
                          HD_SCENE_INDEX_EMULATION_TOKENS);

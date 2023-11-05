@@ -38,6 +38,7 @@
 #include "pxr/base/gf/vec2d.h"
 #include "pxr/base/trace/trace.h"
 #include "pxr/base/tf/diagnostic.h"
+#include "pxr/base/tf/hash.h"
 #include "pxr/base/tf/mallocTag.h"
 #include "pxr/base/tf/ostreamMethods.h"
 
@@ -84,13 +85,12 @@ public:
         {
             inline size_t operator()(const ManifestKey& key) const
             {
-                size_t hash = key.primPath.GetHash();
-                boost::hash_combine(hash, TfHash()(key.clipSetName));
-                boost::hash_combine(hash, key.clipPrimPath.GetHash());
-                for (const auto& p : key.clipAssetPaths) {
-                    boost::hash_combine(hash, p.GetHash());
-                }
-                return hash;
+                return TfHash::Combine(
+                    key.primPath,
+                    key.clipSetName,
+                    key.clipPrimPath,
+                    key.clipAssetPaths
+                );
             }
         };
     };
@@ -210,13 +210,14 @@ Usd_ClipCache::PopulateClipsForPrim(
     const SdfPath& path, const PcpPrimIndex& primIndex)
 {
     TRACE_FUNCTION();
-    TfAutoMallocTag2 tag("Usd", "Usd_ClipCache::PopulateClipsForPrim");
+    TfAutoMallocTag tag("Usd", "Usd_ClipCache::PopulateClipsForPrim");
 
     std::vector<Usd_ClipSetRefPtr> allClips;
     _ComputeClipsFromPrimIndex(path, primIndex, &allClips);
 
     const bool primHasClips = !allClips.empty();
     if (primHasClips) {
+        TRACE_SCOPE("Usd_ClipCache::PopulateClipsForPrim (primHasClips)");
         tbb::mutex::scoped_lock lock;
         if (_concurrentPopulationContext) {
             lock.acquire(_concurrentPopulationContext->_mutex);

@@ -31,7 +31,6 @@ TF_WRAP_MODULE
     // Base classes must precede derived classes.  Indentation indicates class
     // hierarchy.
     TF_WRAP(UsdRiMaterialAPI);
-    TF_WRAP(UsdRiTextureAPI);
     TF_WRAP(UsdRiSplineAPI);
 
     TF_WRAP(UsdRiStatementsAPI);
@@ -39,4 +38,6 @@ TF_WRAP_MODULE
     TF_WRAP(UsdRiTokens);
 
     TF_WRAP(UsdRiRmanUtilities);
+
+    TF_WRAP(UsdRiRenderPassAPI);
 }

@@ -35,6 +35,8 @@
 #include "pxr/usd/sdf/abstractData.h"
 #include "pxr/usd/sdf/path.h"
 
+#include "pxr/base/tf/hash.h"
+
 #include <type_traits>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -180,8 +182,15 @@ public:
     }
 
     // hash_value overload for std/boost hash.
-    USD_API
-    friend size_t hash_value(const UsdObject &obj);
+    friend size_t hash_value(const UsdObject &obj) {
+        return TfHash()(obj);
+    }
+
+    // TfHash support
+    template <class HashState>
+    friend void TfHashAppend(HashState &h, const UsdObject &obj) {
+        h.Append(obj._type, obj._prim, obj._proxyPrimPath, obj._propName);
+    }
 
     /// Return the stage that owns the object, and to whose state and lifetime
     /// this object's validity is tied.
@@ -625,6 +634,30 @@ public:
     /// will return a meaningful value for documentation. 
     USD_API
     bool HasAuthoredDocumentation() const;
+
+    /// Return this object's display name (metadata).  This returns the
+    /// empty string if no display name has been set.
+    /// \sa SetDisplayName()
+    USD_API
+    std::string GetDisplayName() const;
+
+    /// Sets this object's display name (metadata).  Returns true on success.
+    ///
+    /// DisplayName is meant to be a descriptive label, not necessarily an
+    /// alternate identifier; therefore there is no restriction on which
+    /// characters can appear in it.
+    USD_API
+    bool SetDisplayName(const std::string& name) const;
+
+    /// Clears this object's display name (metadata) in the current EditTarget
+    /// (only).  Returns true on success.
+    USD_API
+    bool ClearDisplayName() const;
+
+    /// Returns true if displayName was explicitly authored and GetMetadata()
+    /// will return a meaningful value for displayName. 
+    USD_API
+    bool HasAuthoredDisplayName() const;
 
     // --------------------------------------------------------------------- //
     /// @}

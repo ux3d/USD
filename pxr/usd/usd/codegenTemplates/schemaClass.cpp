@@ -24,13 +24,14 @@
 #include "{{ libraryPath }}/{{ cls.GetHeaderFile() }}"
 #include "pxr/usd/usd/schemaRegistry.h"
 #include "pxr/usd/usd/typed.h"
-{% if cls.isApi %}
-#include "pxr/usd/usd/tokens.h"
-{% endif %}
 
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/sdf/assetPath.h"
 
+{% if cls.isMultipleApply and cls.propertyNamespacePrefix %}
+#include "pxr/base/tf/staticTokens.h"
+
+{% endif %}
 {% if useExportAPI %}
 {{ namespaceOpen }}
 
@@ -51,13 +52,10 @@ TF_REGISTRY_FUNCTION(TfType)
 {% endif %}
 }
 
-{% if cls.isApi %}
+{% if cls.isMultipleApply and cls.propertyNamespacePrefix %}
 TF_DEFINE_PRIVATE_TOKENS(
     _schemaTokens,
-    ({{ cls.primName }})
-{% if cls.isMultipleApply and cls.propertyNamespacePrefix %}
     ({{ cls.propertyNamespacePrefix }})
-{% endif %}
 );
 
 {% endif %}
@@ -92,6 +90,20 @@ TF_DEFINE_PRIVATE_TOKENS(
 {{ cls.cppClassName }}::Get(const UsdPrim &prim, const TfToken &name)
 {
     return {{ cls.cppClassName }}(prim, name);
+}
+
+/* static */
+std::vector<{{ cls.cppClassName }}>
+{{ cls.cppClassName }}::GetAll(const UsdPrim &prim)
+{
+    std::vector<{{ cls.cppClassName }}> schemas;
+    
+    for (const auto &schemaName :
+         UsdAPISchemaBase::_GetMultipleApplyInstanceNames(prim, _GetStaticTfType())) {
+        schemas.emplace_back(prim, schemaName);
+    }
+
+    return schemas;
 }
 
 {% endif %}

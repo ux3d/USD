@@ -43,11 +43,11 @@ PXR_NAMESPACE_OPEN_SCOPE
 ///
 /// The concepts of displayWindow and dataWindow are similar to the ones in
 /// OpenEXR, including that the x- and y-axis of the coordinate system point
-/// left and down, respectively.
+/// right and down, respectively.
 ///
 /// In fact, these windows mean the same here and in OpenEXR if the
 /// displayWindow has the same aspect ratio (when accounting for the
-/// pixelAspectRatio) as the filmback plane of the camera has (that is the
+/// pixelAspectRatio) as the filmback plane of the camera (that is the
 /// ratio of the horizontalAperture to verticalAperture of, e.g., Usd's Camera
 /// or GfCamera).
 ///
@@ -66,7 +66,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 /// When using the AOVs, the render buffer size is determined
 /// independently from the framing info. However, the dataWindow is
 /// supposed to be contained in the render buffer rect (in particular,
-/// the dataWindow cannot contain pixels withs negative coordinates -
+/// the dataWindow cannot contain pixels with negative coordinates -
 /// this restriction does not apply if, e.g., hdPrman circumvents AOVs
 /// and writes directly to EXR). In other words, unlike in OpenEXR,
 /// the rect of pixels for which we allocate storage can differ from
@@ -110,6 +110,27 @@ public:
     CAMERAUTIL_API
     bool operator!=(const CameraUtilFraming& other) const;
 
+    /// The filmback window is the rectangle in pixel space corresponding
+    /// to the filmback plane. It is obtained by conforming the display
+    /// window using the camera's aspect ratio.
+    ///
+    /// Note that the window policy describes how the camera frustum is
+    /// modified to match the display window's aspect ratio. The filmback
+    /// window is transforming differently: if, e.g., the camera frustum's
+    /// height had to be increased to match the displayWindow's aspect ratio
+    /// (since it is less than the camera's aspect ratio and the policy is
+    /// CameraUtilFit), then the filmback window height will be less than
+    /// that of the displayWindow. In other words, imagine an application
+    /// window too tall to display the camera. We will increase the camera
+    /// frustum's height to fill the entire window. To show only what the
+    /// camera would see, we need to add slates on the bottom and top.
+    /// The filmback window is the rect cut out by the slates.
+    ///
+    CAMERAUTIL_API
+    GfRange2f ComputeFilmbackWindow(
+        float cameraAspectRatio,
+        CameraUtilConformWindowPolicy windowPolicy) const;
+
     /// Given the projectionMatrix computed from a camera, applies
     /// the framing. To obtain a correct result, a rasterizer needs
     /// to use the resulting projection matrix and set the viewport
@@ -120,8 +141,7 @@ public:
         const GfMatrix4d &projectionMatrix,
         CameraUtilConformWindowPolicy windowPolicy) const;
 
-    /// The display window. It will be conformed to the camera's
-    /// aspect ratio and then mapped to the filmback plane.
+    /// The display window.
     GfRange2f displayWindow;
     
     /// The data window. That is the rect of pixels that the renderer

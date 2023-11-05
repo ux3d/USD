@@ -46,13 +46,15 @@ TF_REGISTRY_FUNCTION(TfType)
 UsdImagingCameraAdapter::~UsdImagingCameraAdapter() = default;
 
 TfTokenVector
-UsdImagingCameraAdapter::GetImagingSubprims()
+UsdImagingCameraAdapter::GetImagingSubprims(UsdPrim const& prim)
 {
     return { TfToken() };
 }
 
 TfToken
-UsdImagingCameraAdapter::GetImagingSubprimType(TfToken const& subprim)
+UsdImagingCameraAdapter::GetImagingSubprimType(
+        UsdPrim const& prim,
+        TfToken const& subprim)
 {
     if (subprim.IsEmpty()) {
         return HdPrimTypeTokens->camera;
@@ -62,8 +64,8 @@ UsdImagingCameraAdapter::GetImagingSubprimType(TfToken const& subprim)
 
 HdContainerDataSourceHandle
 UsdImagingCameraAdapter::GetImagingSubprimData(
-        TfToken const& subprim,
         UsdPrim const& prim,
+        TfToken const& subprim,
         const UsdImagingDataSourceStageGlobals &stageGlobals)
 {
     if (subprim.IsEmpty()) {
@@ -77,11 +79,14 @@ UsdImagingCameraAdapter::GetImagingSubprimData(
 
 HdDataSourceLocatorSet
 UsdImagingCameraAdapter::InvalidateImagingSubprim(
+        UsdPrim const& prim,
         TfToken const& subprim,
-        TfTokenVector const& properties)
+        TfTokenVector const& properties,
+        const UsdImagingPropertyInvalidationType invalidationType)
 {
     if (subprim.IsEmpty()) {
-        return UsdImagingDataSourceCameraPrim::Invalidate(subprim, properties);
+        return UsdImagingDataSourceCameraPrim::Invalidate(
+            prim, subprim, properties, invalidationType);
     }
 
     return HdDataSourceLocatorSet();

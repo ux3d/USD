@@ -596,6 +596,10 @@ void wrapLayer()
 
         .def("TransferContent", &SdfLayer::TransferContent)
 
+        .def("StreamsData", &This::StreamsData)
+
+        .def("IsDetached", &This::IsDetached)
+
         .add_property("empty", &This::IsEmpty)
 
         .add_property("dirty", &This::IsDirty)
@@ -666,6 +670,17 @@ void wrapLayer()
         .def("UpdateCompositionAssetDependency", 
              &This::UpdateCompositionAssetDependency)
 
+        .def("SetDetachedLayerRules", &This::SetDetachedLayerRules)
+        .staticmethod("SetDetachedLayerRules")
+
+        .def("GetDetachedLayerRules", &This::GetDetachedLayerRules,
+             return_value_policy<return_by_value>())
+        .staticmethod("GetDetachedLayerRules")
+
+        .def("IsIncludedByDetachedLayerRules", 
+             &This::IsIncludedByDetachedLayerRules)
+        .staticmethod("IsIncludedByDetachedLayerRules")
+
         .def("SetMuted", &This::SetMuted)
 
         .def("IsMuted", &_WrapIsMuted)
@@ -729,6 +744,14 @@ void wrapLayer()
 
         .def("HasCustomLayerData", &This::HasCustomLayerData)
         .def("ClearCustomLayerData", &This::ClearCustomLayerData)
+
+        .add_property("expressionVariables",
+           &This::GetExpressionVariables,
+           &This::SetExpressionVariables,
+           "The expressionVariables dictionary associated with this layer.")
+
+        .def("HasExpressionVariables", &This::HasExpressionVariables)
+        .def("ClearExpressionVariables", &This::ClearExpressionVariables)
 
         .add_property("startTimeCode",
             &This::GetStartTimeCode,
@@ -932,6 +955,28 @@ void wrapLayer()
         .def("EraseTimeSample", &_EraseTimeSample)
         ;
 
+    {
+        using This = SdfLayer::DetachedLayerRules;
+        class_<This>("DetachedLayerRules")
+            .def(init<>())
+
+            .def("IncludeAll", &This::IncludeAll,
+                 return_value_policy<return_by_value>())
+            .def("Include", &This::Include,
+                 return_value_policy<return_by_value>())
+            .def("Exclude", &This::Exclude,
+                 return_value_policy<return_by_value>())
+
+            .def("IncludedAll", &This::IncludedAll)
+            .def("GetIncluded", &This::GetIncluded,
+                 return_value_policy<TfPySequenceToList>())
+            .def("GetExcluded", &This::GetExcluded,
+                 return_value_policy<TfPySequenceToList>())
+
+            .def("IsIncluded", &This::IsIncluded)
+            ;
+    }
+
     TfPyContainerConversions::from_python_sequence<
         SdfLayerHandleSet, TfPyContainerConversions::set_policy>();
 
@@ -940,5 +985,3 @@ void wrapLayer()
         TfPyContainerConversions::variable_capacity_policy>();
 
 }
-
-TF_REFPTR_CONST_VOLATILE_GET(SdfLayer)

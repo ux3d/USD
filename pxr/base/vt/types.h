@@ -33,11 +33,11 @@
 #include "pxr/base/arch/inttypes.h"
 #include "pxr/base/gf/declare.h"
 #include "pxr/base/gf/half.h"
+#include "pxr/base/tf/preprocessorUtilsLite.h"
 #include "pxr/base/tf/token.h"
 
-#include <boost/preprocessor/cat.hpp>
 #include <boost/preprocessor/seq/for_each.hpp>
-#include <boost/preprocessor/tuple/elem.hpp>
+#include <boost/preprocessor/seq/for_each_i.hpp>
 
 #include <cstddef>
 #include <cstring>
@@ -141,9 +141,9 @@ VT_TYPE_IS_CHEAP_TO_COPY(TfToken);
 
 // Helper macros for extracting bits from a type tuple.
 #define VT_TYPE(elem) \
-BOOST_PP_TUPLE_ELEM(2, 0, elem)
+TF_PP_TUPLE_ELEM(0, elem)
 #define VT_TYPE_NAME(elem) \
-BOOST_PP_TUPLE_ELEM(2, 1, elem)   
+TF_PP_TUPLE_ELEM(1, elem)
 
 
 // Composite groups of types.
@@ -172,20 +172,103 @@ VT_SCALAR_CLASS_VALUE_TYPES VT_BUILTIN_VALUE_TYPES
 template<typename T> class VtArray;
 #define VT_ARRAY_TYPEDEF(r, unused, elem) \
 typedef VtArray< VT_TYPE(elem) > \
-BOOST_PP_CAT(Vt, BOOST_PP_CAT(VT_TYPE_NAME(elem), Array)) ;
+TF_PP_CAT(Vt, TF_PP_CAT(VT_TYPE_NAME(elem), Array)) ;
 BOOST_PP_SEQ_FOR_EACH(VT_ARRAY_TYPEDEF, ~, VT_SCALAR_VALUE_TYPES)
 
 // The following preprocessor code generates the boost pp sequence for
 // all array value types (VT_ARRAY_VALUE_TYPES)
 #define VT_ARRAY_TYPE_TUPLE(r, unused, elem) \
-(( BOOST_PP_CAT(Vt, BOOST_PP_CAT(VT_TYPE_NAME(elem), Array)) , \
-   BOOST_PP_CAT(VT_TYPE_NAME(elem), Array) ))
+(( TF_PP_CAT(Vt, TF_PP_CAT(VT_TYPE_NAME(elem), Array)) , \
+   TF_PP_CAT(VT_TYPE_NAME(elem), Array) ))
 #define VT_ARRAY_VALUE_TYPES \
 BOOST_PP_SEQ_FOR_EACH(VT_ARRAY_TYPE_TUPLE, ~, VT_SCALAR_VALUE_TYPES)
 
 #define VT_CLASS_VALUE_TYPES \
 VT_ARRAY_VALUE_TYPES VT_SCALAR_CLASS_VALUE_TYPES VT_NONARRAY_VALUE_TYPES
-    
+
+#define VT_VALUE_TYPES \
+    VT_BUILTIN_VALUE_TYPES VT_CLASS_VALUE_TYPES
+
+namespace Vt_KnownValueTypeDetail
+{
+
+// Implement compile-time value type indexes.
+//
+// Base case -- unknown types get index -1.
+template <class T>
+constexpr int
+GetIndex() {
+    return -1;
+}
+
+// Set indexes for known types.
+#define VT_SET_VALUE_TYPE_INDEX(r, unused, i, elem)                       \
+    template <> constexpr int                                             \
+    GetIndex< VT_TYPE(elem) >() {                                         \
+        return i;                                                         \
+    }
+BOOST_PP_SEQ_FOR_EACH_I(VT_SET_VALUE_TYPE_INDEX, ~, VT_VALUE_TYPES)
+#undef VT_SET_VALUE_TYPE_INDEX
+
+} // Vt_KnownValueTypeDetail
+
+// Total number of 'known' value types.
+constexpr int
+VtGetNumKnownValueTypes() {
+    return BOOST_PP_SEQ_SIZE(VT_VALUE_TYPES);
+}
+
+/// Provide compile-time value type indexes for types that are "known" to Vt --
+/// specifically, those types that appear in VT_VALUE_TYPES.  Note that VtArray
+/// and VtValue can work with other types that are not these "known" types.
+///
+/// VtGetKnownValueTypeIndex can only be used with known types.  Querying a
+/// type that is not known to Vt results in a compilation error.  The set of
+/// known types and their indexes are not guaranteed to be stable across
+/// releases of the library.
+///
+/// Most clients should prefer VtVisitValue over direct use of the type index
+/// as VtVisitValue provides convenient and efficient access to the held
+/// value.
+template <class T>
+constexpr int
+VtGetKnownValueTypeIndex()
+{
+    constexpr int index = Vt_KnownValueTypeDetail::GetIndex<T>();
+    static_assert(index != -1, "T is not one of the known VT_VALUE_TYPES.");
+    return index;
+}
+
+/// Returns true if `T` is a type that appears in VT_VALUE_TYPES.
+template <class T>
+constexpr bool
+VtIsKnownValueType()
+{
+    return Vt_KnownValueTypeDetail::GetIndex<T>() != -1;
+}
+
+// XXX: Works around an MSVC bug where constexpr functions cannot be used as the
+// condition in enable_if, fixed in MSVC 2022 version 14.33 1933 (version 17.3).
+// https://developercommunity.visualstudio.com/t/function-template-has-already-been-defined-using-s/833543
+template <class T>
+struct VtIsKnownValueType_Workaround
+{
+    static const bool value = VtIsKnownValueType<T>();
+};
+
+// None of the VT_VALUE_TYPES are value proxies.  We want to specialize these
+// templates here, since otherwise the VtIsTypedValueProxy will require a
+// complete type to check if it derives VtTypedValueProxyBase.
+#define VT_SPECIALIZE_IS_VALUE_PROXY(r, unused, elem)                          \
+    template <> struct                                                         \
+    VtIsValueProxy< VT_TYPE(elem) > : std::false_type {};                      \
+    template <> struct                                                         \
+    VtIsTypedValueProxy< VT_TYPE(elem) > : std::false_type {};                 \
+    template <> struct                                                         \
+    VtIsErasedValueProxy< VT_TYPE(elem) > : std::false_type {};
+BOOST_PP_SEQ_FOR_EACH(VT_SPECIALIZE_IS_VALUE_PROXY, ~, VT_VALUE_TYPES)
+#undef VT_SPECIALIZE_IS_VALUE_PROXY
+
 // Free functions to represent "zero" for various base types.  See
 // specializations in Types.cpp
 template<typename T>

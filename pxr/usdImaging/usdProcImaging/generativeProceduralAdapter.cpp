@@ -27,6 +27,14 @@
 #include "pxr/usd/usdProc/generativeProcedural.h"
 
 #include "pxr/usdImaging/usdImaging/indexProxy.h"
+#include "pxr/usdImaging/usdImaging/dataSourcePrim.h"
+#include "pxr/usdImaging/usdImaging/gprimAdapter.h"
+
+#include "pxr/usdImaging/usdImaging/tokens.h"
+
+#include "pxr/imaging/hd/primvarsSchema.h"
+#include "pxr/imaging/hd/primvarSchema.h"
+
 #include "pxr/base/tf/type.h"
 
 
@@ -39,10 +47,79 @@ TF_DEFINE_PRIVATE_TOKENS(
 
 TF_REGISTRY_FUNCTION(TfType)
 {
-    typedef UsdProcImagingGenerativeProceduralAdapter Adapter;
+    using Adapter = UsdProcImagingGenerativeProceduralAdapter;
     TfType t = TfType::Define<Adapter, TfType::Bases<Adapter::BaseAdapter> >();
     t.SetFactory< UsdImagingPrimAdapterFactory<Adapter> >();
 }
+
+// ----------------------------------------------------------------------------
+// Scene index classes and methods
+// ----------------------------------------------------------------------------
+
+TfTokenVector
+UsdProcImagingGenerativeProceduralAdapter::GetImagingSubprims(
+        UsdPrim const& prim)
+{
+    return { TfToken() };
+}
+
+TfToken
+UsdProcImagingGenerativeProceduralAdapter::GetImagingSubprimType(
+        UsdPrim const& prim,
+        TfToken const& subprim)
+{
+    if (subprim.IsEmpty()) {
+        return _GetHydraPrimType(prim);
+    }
+
+    return TfToken();
+}
+
+HdContainerDataSourceHandle
+UsdProcImagingGenerativeProceduralAdapter::GetImagingSubprimData(
+        UsdPrim const& prim,
+        TfToken const& subprim,
+        const UsdImagingDataSourceStageGlobals &stageGlobals)
+{
+    if (subprim.IsEmpty()) {
+        //return _PrimDataSource::New(
+        return UsdImagingDataSourcePrim::New(
+            prim.GetPath(),
+            prim,
+            stageGlobals);
+    }
+    return nullptr;
+}
+
+HdDataSourceLocatorSet
+UsdProcImagingGenerativeProceduralAdapter::InvalidateImagingSubprim(
+        UsdPrim const& prim,
+        TfToken const& subprim,
+        TfTokenVector const& properties,
+        const UsdImagingPropertyInvalidationType invalidationType)
+{
+    if (subprim.IsEmpty()) {
+        for (const TfToken &name : properties) {
+            if (name == UsdProcTokens->proceduralSystem) {
+                // Return the locator convention which indicates that stage
+                // scene index should do the equivalent of resync. 
+                return HdDataSourceLocatorSet(
+                    HdDataSourceLocator(
+                        UsdImagingTokens->stageSceneIndexRepopulate));
+            }
+        }
+
+        HdDataSourceLocatorSet result = 
+            UsdImagingDataSourcePrim::Invalidate(
+                prim, subprim, properties, invalidationType);
+
+        return result;
+    }
+
+    return HdDataSourceLocatorSet();
+}
+
+// ----------------------------------------------------------------------------
 
 SdfPath
 UsdProcImagingGenerativeProceduralAdapter::Populate(
@@ -50,26 +127,17 @@ UsdProcImagingGenerativeProceduralAdapter::Populate(
     UsdImagingIndexProxy* index,
     UsdImagingInstancerContext const *instancerContext)
 {
-    TfToken rprimType;
-    UsdProcGenerativeProcedural genProc(prim);
+    const SdfPath cachePath = UsdImagingGprimAdapter::_ResolveCachePath(
+        prim.GetPath(), instancerContext);
+    UsdPrim proxyPrim
+        = prim.GetStage()->GetPrimAtPath(cachePath.GetAbsoluteRootOrPrimPath());
 
-    VtValue procSysValue;
-
-    if (UsdAttribute procSysAttr = genProc.GetProceduralSystemAttr()) {
-        procSysAttr.Get(&procSysValue);
-    }
-
-    if (procSysValue.IsHolding<TfToken>()) {
-        rprimType = procSysValue.UncheckedGet<TfToken>();
-    }
-
-    if (rprimType.IsEmpty()) {
-        rprimType = _tokens->inertGenerativeProcedural;
-    }
-
-    index->InsertRprim(rprimType, prim.GetPath(), prim);
-
-    return prim.GetPath();
+    index->InsertRprim(
+        _GetHydraPrimType(prim), cachePath, proxyPrim,
+        instancerContext ? instancerContext->instancerAdapter
+                         : UsdImagingPrimAdapterSharedPtr());
+    index->InsertRprim(_GetHydraPrimType(prim), prim.GetPath(), prim);
+    return cachePath;
 }
 
 bool
@@ -199,7 +267,7 @@ UsdProcImagingGenerativeProceduralAdapter::TrackVariability(
     UsdPrim const& prim,
     SdfPath const& cachePath,
     HdDirtyBits* timeVaryingBits,
-    UsdImagingInstancerContext const*  nstancerContext) const
+    UsdImagingInstancerContext const* instancerContext) const
 {
     // XXX copied/pared from UsdImagingGprimAdapter
     if (!(*timeVaryingBits & HdChangeTracker::DirtyPrimvar)) {
@@ -247,6 +315,12 @@ UsdProcImagingGenerativeProceduralAdapter::MarkDirty(
     UsdImagingIndexProxy* index)
 {
     index->MarkRprimDirty(cachePath, dirty);
+
+    // On DirtyPrimvar, we need to re-run UpdateForTime to check for new
+    // primvars that may have been added by an edit.
+    if (dirty & HdChangeTracker::DirtyPrimvar) {
+        index->RequestUpdateForTime(cachePath);
+    }
 }
 
 void
@@ -267,5 +341,28 @@ UsdProcImagingGenerativeProceduralAdapter::MarkVisibilityDirty(
     index->MarkRprimDirty(cachePath, HdChangeTracker::DirtyVisibility);
 }
 
+TfToken
+UsdProcImagingGenerativeProceduralAdapter::_GetHydraPrimType(
+    UsdPrim const& prim)
+{
+    TfToken rprimType;
+    UsdProcGenerativeProcedural genProc(prim);
+
+    VtValue procSysValue;
+
+    if (UsdAttribute procSysAttr = genProc.GetProceduralSystemAttr()) {
+        procSysAttr.Get(&procSysValue);
+    }
+
+    if (procSysValue.IsHolding<TfToken>()) {
+        rprimType = procSysValue.UncheckedGet<TfToken>();
+    }
+
+    if (rprimType.IsEmpty()) {
+        rprimType = _tokens->inertGenerativeProcedural;
+    }
+
+    return rprimType;
+}
 
 PXR_NAMESPACE_CLOSE_SCOPE

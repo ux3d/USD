@@ -48,6 +48,7 @@
                             "UsdImagingGprimAdapter"
                         ],
                         "isInternal": true,
+                        "includeSchemaFamily": true,
                         "primTypeName": "Capsule"
                     },
                     "UsdImagingCollectionAPIAdapter" : {
@@ -69,6 +70,11 @@
                         "isInternal": true,
                         "primTypeName": "coordSys"
                     },
+                    "UsdImagingCoordSysAPIAdapter" : {
+                        "bases": ["UsdImagingAPISchemaAdapter"],
+                        "isInternal": true,
+                        "apiSchemaName": "CoordSysAPI"
+                    },
                     "UsdImagingCubeAdapter": {
                         "bases": [
                             "UsdImagingGprimAdapter"
@@ -81,7 +87,13 @@
                             "UsdImagingGprimAdapter"
                         ],
                         "isInternal": true,
+                        "includeSchemaFamily": true,
                         "primTypeName": "Cylinder"
+                    },
+                    "UsdImagingDrawModeAdapter" : {
+                        "bases": ["UsdImagingPrimAdapter"],
+                        "isInternal": true,
+                        "primTypeName": "__drawModeAdapter"
                     },
                     "UsdImagingHermiteCurvesAdapter": {
                         "bases": [
@@ -95,6 +107,13 @@
                         "isInternal": true,
                         "primTypeName": "Material"
                     },
+
+                    "UsdImagingShaderAdapter" : {
+                        "bases": ["UsdImagingRepresentedByAncestorPrimAdapter"],
+                        "isInternal": true,
+                        "primTypeName": "Shader"
+                    },
+
                     "UsdImagingMaterialBindingAPIAdapter" : {
                         "bases": ["UsdImagingAPISchemaAdapter"],
                         "isInternal": true,
@@ -156,13 +175,19 @@
                         "isInternal": true,
                         "primTypeName": "RenderSettings"
                     },
-                    "UsdImagingSampleFilterAdapter": {
+                    "UsdImagingRenderProductAdapter": {
                         "bases": [
                             "UsdImagingPrimAdapter"
                         ],
                         "isInternal": true,
-                        "primTypeName": "PxrSampleFilterPluginBase",
-                        "includeDerivedPrimTypes" : true 
+                        "primTypeName": "RenderProduct"
+                    },
+                    "UsdImagingRenderVarAdapter": {
+                        "bases": [
+                            "UsdImagingPrimAdapter"
+                        ],
+                        "isInternal": true,
+                        "primTypeName": "RenderVar"
                     },
                     "UsdImagingVolumeAdapter": {
                         "bases": [
@@ -179,6 +204,13 @@
                         "primTypeName": "LightAPI",
                         "includeDerivedPrimTypes" : true 
                     },
+                    "UsdImagingLightAPIAdapter": {
+                        "bases": [
+                            "UsdImagingAPISchemaAdapter"
+                        ],
+                        "isInternal": true,
+                        "apiSchemaName": "LightAPI"
+                    },
                     "UsdImagingLightFilterAdapter": {
                         "bases": [
                             "UsdImagingPrimAdapter"
@@ -193,6 +225,13 @@
                         ],
                         "isInternal": true,
                         "primTypeName": "DomeLight"
+                    },
+                    "UsdImagingDomeLight_1Adapter": {
+                        "bases": [
+                            "UsdImagingLightAdapter"
+                        ],
+                        "isInternal": true,
+                        "primTypeName": "DomeLight_1"
                     },
                     "UsdImagingRectLightAdapter": {
                         "bases": [
@@ -256,6 +295,13 @@
                         ],
                         "isInternal": true,
                         "primTypeName": "PluginLightFilter"
+                    },
+                    "UsdImagingGeomModelAPIAdapter": {
+                        "bases": [
+                            "UsdImagingAPISchemaAdapter"
+                        ],
+                        "isInternal": true,
+                        "apiSchemaName": "GeomModelAPI"
                     }
                 }
             },

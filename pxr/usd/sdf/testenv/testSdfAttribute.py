@@ -143,10 +143,6 @@ class TestSdfAttribute(unittest.TestCase):
         # assign a default value, otherwise after ClearInfo, attr will expire.
         attr.default = 1
 
-        self.assertEqual(attr.HasInfo('bogus_key_test'), False)
-        with self.assertRaises(Tf.ErrorException):
-            attr.ClearInfo('bogus_key_test')
-
         self.assertEqual(attr.custom, False)
         attr.custom = True
         self.assertEqual(attr.custom, True)
@@ -246,6 +242,24 @@ class TestSdfAttribute(unittest.TestCase):
         attr.ClearInfo('displayGroup')
         self.assertFalse(attr.HasInfo('displayGroup'))
         self.assertEqual(attr.displayGroup, '')
+
+    def test_ClearUnexpectedField(self):
+        layer = Sdf.Layer.CreateAnonymous("ClearUnexpected")
+        layer.ImportFromString(
+'''#sdf 1.4.32
+def Sphere "Foo"
+{
+    double radius (
+        displayName = "Radius"
+        unrecognized = "Test"
+    )
+}
+''')
+
+        spec = layer.GetPropertyAtPath("/Foo.radius")
+        self.assertTrue(spec.HasInfo("unrecognized"))
+        spec.ClearInfo("unrecognized")
+        self.assertFalse(spec.HasInfo("unrecognized"))
 
     def test_Connections(self):
         layer = Sdf.Layer.CreateAnonymous()
@@ -481,6 +495,30 @@ def Scope "Scope"
                          {1.23: 5, 3.23: 10, 6: 5})
         self.assertEqual(prim.attributes['desc'].GetInfo('timeSamples'),
                          {1.23: 'foo', 3.23: 'bar', 6: 'baz'})
+
+    def test_OpaqueNoAuthoredDefault(self):
+        """
+        Attempting to set the default value of an opaque attribute should fail.
+        """
+        layer = Sdf.Layer.CreateAnonymous()
+        prim = Sdf.PrimSpec(layer, "Test", Sdf.SpecifierDef, "TestType")
+        attr = Sdf.AttributeSpec(prim, "Attr", Sdf.ValueTypeNames.Opaque)
+        self.assertEqual(attr.default, None)
+        with self.assertRaises(Tf.ErrorException):
+            attr.default = Sdf.OpaqueValue()
+        self.assertEqual(attr.default, None)
+
+    def test_GroupNoAuthoredDefault(self):
+        """
+        Attempting to set the default value of a group attribute should fail.
+        """
+        layer = Sdf.Layer.CreateAnonymous()
+        prim = Sdf.PrimSpec(layer, "Test", Sdf.SpecifierDef, "TestType")
+        attr = Sdf.AttributeSpec(prim, "Attr", Sdf.ValueTypeNames.Group)
+        self.assertEqual(attr.default, None)
+        with self.assertRaises(Tf.ErrorException):
+            attr.default = Sdf.OpaqueValue()
+        self.assertEqual(attr.default, None)
 
 if __name__ == '__main__':
     unittest.main()

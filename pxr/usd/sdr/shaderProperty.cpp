@@ -57,6 +57,7 @@ namespace {
             {SdrPropertyTypes->String,  SdfValueTypeNames->String},
             {SdrPropertyTypes->Float,   SdfValueTypeNames->Float},
             {SdrPropertyTypes->Color,   SdfValueTypeNames->Color3f},
+            {SdrPropertyTypes->Color4,  SdfValueTypeNames->Color4f},
             {SdrPropertyTypes->Point,   SdfValueTypeNames->Point3f},
             {SdrPropertyTypes->Normal,  SdfValueTypeNames->Normal3f},
             {SdrPropertyTypes->Vector,  SdfValueTypeNames->Vector3f},
@@ -73,6 +74,7 @@ namespace {
             {SdrPropertyTypes->String,  SdfValueTypeNames->StringArray},
             {SdrPropertyTypes->Float,   SdfValueTypeNames->FloatArray},
             {SdrPropertyTypes->Color,   SdfValueTypeNames->Color3fArray},
+            {SdrPropertyTypes->Color4,  SdfValueTypeNames->Color4fArray},
             {SdrPropertyTypes->Point,   SdfValueTypeNames->Point3fArray},
             {SdrPropertyTypes->Normal,  SdfValueTypeNames->Normal3fArray},
             {SdrPropertyTypes->Vector,  SdfValueTypeNames->Vector3fArray},
@@ -127,6 +129,11 @@ namespace {
             {SdrPropertyTypes->Color,
                 {
                     {SdrPropertyRole->None, {SdrPropertyTypes->Float, 3}}
+                }
+            },
+            {SdrPropertyTypes->Color4,
+                {
+                    {SdrPropertyRole->None, {SdrPropertyTypes->Float, 4}}
                 }
             },
             {SdrPropertyTypes->Point,
@@ -248,7 +255,9 @@ namespace {
             }
 
             if (type == SdrPropertyTypes->Vstruct) {
-                return std::make_pair(SdfValueTypeNames->Float, type);
+                return std::make_pair(isArray ? SdfValueTypeNames->FloatArray 
+                                              : SdfValueTypeNames->Float,
+                                      type);
             }
 
             return _GetTypeIndicatorFromDefaultMapping(type, isArray);
@@ -285,7 +294,9 @@ namespace {
             if (type == SdrPropertyTypes->Terminal ||
                 type == SdrPropertyTypes->Struct ||
                 type == SdrPropertyTypes->Vstruct) {
-                return std::make_pair(SdfValueTypeNames->Token, type);
+                return std::make_pair(isArray ? SdfValueTypeNames->TokenArray
+                                              : SdfValueTypeNames->Token, 
+                                      type);
             }
 
             // We prefer more specific types, so if the arraySize is 2, 3, or 4,
@@ -471,6 +482,12 @@ namespace {
                 isSdrValueConformed = sdrDefaultValue.IsHolding<GfVec3f>();
             } else {
                 isSdrValueConformed = sdrDefaultValue.IsHolding<VtArray<GfVec3f>>();
+            }
+        } else if (sdrType == SdrPropertyTypes->Color4) {
+            if (!isArray) {
+                isSdrValueConformed = sdrDefaultValue.IsHolding<GfVec4f>();
+            } else {
+                isSdrValueConformed = sdrDefaultValue.IsHolding<VtArray<GfVec4f>>();
             }
         } else if (sdrType == SdrPropertyTypes->Matrix) {
             if (!isArray) {
@@ -739,6 +756,19 @@ SdrShaderProperty::CanConnectTo(const NdrProperty& other) const
 
     // Connections between float-3 types are possible
     if (inputIsFloat3 && outputIsFloat3) {
+        return true;
+    }
+
+    bool inputIsFloat4 =
+        (inputType == SdrPropertyTypes->Color4) ||
+        (sdfInputType == SdfValueTypeNames->Float4);
+
+    bool outputIsFloat4 =
+        (outputType == SdrPropertyTypes->Color4) ||
+        (sdfOutputType == SdfValueTypeNames->Float4);
+
+    // Connections between float-4 types are possible
+    if (inputIsFloat4 && outputIsFloat4) {
         return true;
     }
 

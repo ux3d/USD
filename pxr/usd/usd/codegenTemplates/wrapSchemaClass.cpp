@@ -81,7 +81,7 @@ _Repr(const {{ cls.cppClassName }} &self)
 {
     std::string primRepr = TfPyRepr(self.GetPrim());
 {% if cls.isMultipleApply %}
-    std::string instanceName = self.GetName();
+    std::string instanceName = TfPyRepr(self.GetName());
     return TfStringPrintf(
         "{{ libraryName[0]|upper }}{{ libraryName[1:] }}.{{ cls.className }}(%s, '%s')",
         primRepr.c_str(), instanceName.c_str());
@@ -143,8 +143,8 @@ void wrap{{ cls.cppClassName }}()
     cls
 {% if not cls.isAPISchemaBase %}
 {% if cls.isMultipleApply %}
-        .def(init<UsdPrim, TfToken>())
-        .def(init<UsdSchemaBase const&, TfToken>())
+        .def(init<UsdPrim, TfToken>((arg("prim"), arg("name"))))
+        .def(init<UsdSchemaBase const&, TfToken>((arg("schemaObj"), arg("name"))))
 {% else %}
         .def(init<UsdPrim>(arg("prim")))
         .def(init<UsdSchemaBase const&>(arg("schemaObj")))
@@ -168,6 +168,15 @@ void wrap{{ cls.cppClassName }}()
         .def("Get", &This::Get, (arg("stage"), arg("path")))
 {% endif %}
         .staticmethod("Get")
+{% endif %}
+{% if cls.isMultipleApply %}
+
+        .def("GetAll",
+            (std::vector<{{ cls.cppClassName }}>(*)(const UsdPrim &prim))
+                &This::GetAll,
+            arg("prim"),
+            return_value_policy<TfPySequenceToList>())
+        .staticmethod("GetAll")
 {% endif %}
 {% if cls.isConcrete %}
 

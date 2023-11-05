@@ -42,7 +42,6 @@
 
 #include <boost/python.hpp>
 #include <boost/python/stl_iterator.hpp>
-#include <boost/function.hpp>
 
 using namespace boost::python;
 
@@ -523,6 +522,7 @@ void wrapPrimSpec()
         .setattr("AnyTypeToken", SdfTokens->AnyTypeToken)
         .setattr("CommentKey", SdfFieldKeys->Comment)
         .setattr("CustomDataKey", SdfFieldKeys->CustomData)
+        .setattr("DisplayName", SdfFieldKeys->DisplayName)
         .setattr("DocumentationKey", SdfFieldKeys->Documentation)
         .setattr("HiddenKey", SdfFieldKeys->Hidden)
         .setattr("InheritPathsKey", SdfFieldKeys->InheritPaths)

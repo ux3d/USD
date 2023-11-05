@@ -29,6 +29,8 @@ UsdSkelTokensType::UsdSkelTokensType() :
     bindTransforms("bindTransforms", TfToken::Immortal),
     blendShapes("blendShapes", TfToken::Immortal),
     blendShapeWeights("blendShapeWeights", TfToken::Immortal),
+    classicLinear("classicLinear", TfToken::Immortal),
+    dualQuaternion("dualQuaternion", TfToken::Immortal),
     jointNames("jointNames", TfToken::Immortal),
     joints("joints", TfToken::Immortal),
     normalOffsets("normalOffsets", TfToken::Immortal),
@@ -37,6 +39,7 @@ UsdSkelTokensType::UsdSkelTokensType() :
     primvarsSkelGeomBindTransform("primvars:skel:geomBindTransform", TfToken::Immortal),
     primvarsSkelJointIndices("primvars:skel:jointIndices", TfToken::Immortal),
     primvarsSkelJointWeights("primvars:skel:jointWeights", TfToken::Immortal),
+    primvarsSkelSkinningMethod("primvars:skel:skinningMethod", TfToken::Immortal),
     restTransforms("restTransforms", TfToken::Immortal),
     rotations("rotations", TfToken::Immortal),
     scales("scales", TfToken::Immortal),
@@ -47,10 +50,17 @@ UsdSkelTokensType::UsdSkelTokensType() :
     skelSkeleton("skel:skeleton", TfToken::Immortal),
     translations("translations", TfToken::Immortal),
     weight("weight", TfToken::Immortal),
+    BlendShape("BlendShape", TfToken::Immortal),
+    SkelAnimation("SkelAnimation", TfToken::Immortal),
+    SkelBindingAPI("SkelBindingAPI", TfToken::Immortal),
+    Skeleton("Skeleton", TfToken::Immortal),
+    SkelRoot("SkelRoot", TfToken::Immortal),
     allTokens({
         bindTransforms,
         blendShapes,
         blendShapeWeights,
+        classicLinear,
+        dualQuaternion,
         jointNames,
         joints,
         normalOffsets,
@@ -59,6 +69,7 @@ UsdSkelTokensType::UsdSkelTokensType() :
         primvarsSkelGeomBindTransform,
         primvarsSkelJointIndices,
         primvarsSkelJointWeights,
+        primvarsSkelSkinningMethod,
         restTransforms,
         rotations,
         scales,
@@ -68,7 +79,12 @@ UsdSkelTokensType::UsdSkelTokensType() :
         skelJoints,
         skelSkeleton,
         translations,
-        weight
+        weight,
+        BlendShape,
+        SkelAnimation,
+        SkelBindingAPI,
+        Skeleton,
+        SkelRoot
     })
 {
 }

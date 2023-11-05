@@ -45,7 +45,8 @@ class UsdImagingGL_UnitTestWindow;
 ///
 /// A helper class for unit tests which need to perform GL drawing.
 ///
-class UsdImagingGL_UnitTestGLDrawing {
+class UsdImagingGL_UnitTestGLDrawing
+{
 public:
     UsdImagingGL_UnitTestGLDrawing();
     virtual ~UsdImagingGL_UnitTestGLDrawing();
@@ -63,8 +64,14 @@ public:
     bool IsShowGuides() const { return _showGuides; }
     bool IsShowRender() const { return _showRender; }
     bool IsShowProxy() const { return _showProxy; }
-    bool ShouldClearOnce() const { return _clearOnce; }
+
+    // We use a client created presentation output (framebuffer) when
+    // testing present output, otherwise we output AOV images directly.
+    bool PresentComposite() const { return _presentComposite; }
     bool PresentDisabled() const { return _presentDisabled; }
+    bool IsEnabledTestPresentOutput() const {
+        return PresentComposite() || PresentDisabled();
+    }
 
     UsdImagingGLDrawMode GetDrawMode() const { return _drawMode; }
 
@@ -82,6 +89,8 @@ public:
     float GetPixelAspectRatio() const { return _pixelAspectRatio; }
     GfRange2f const & GetDisplayWindow() const { return _displayWindow; }
     GfRect2i const & GetDataWindow() const { return _dataWindow; }
+    CameraUtilConformWindowPolicy const &
+    GetWindowPolicy() const { return _windowPolicy; }
     UsdImagingGLCullStyle GetCullStyle() const { return _cullStyle; }
 
     void RunTest(int argc, char *argv[]);
@@ -95,7 +104,16 @@ public:
     virtual void MouseMove(int x, int y, int modKeys);
     virtual void KeyRelease(int key);
 
-    bool WriteToFile(std::string const & attachment, std::string const & filename) const;
+    // Write an output image from the specified AOV or from the client
+    // created presentation output when present output testing is enabled.
+    bool WriteToFile(UsdImagingGLEngine *engine,
+                     TfToken const &aovName,
+                     std::string const &filename);
+
+    // Helper method to write an output image from the specified AOV.
+    static bool WriteAovToFile(UsdImagingGLEngine *engine,
+                               TfToken const &aovName,
+                               std::string const &filename);
 
 protected:
     float _GetComplexity() const { return _complexity; }
@@ -110,11 +128,6 @@ protected:
                  const UsdImagingGLRenderParams &params) {
         SdfPathVector roots(1, SdfPath::AbsoluteRootPath());
         engine->RenderBatch(roots, params);
-    }
-
-    void _SetDisplayUnloadedPrimsWithBounds(UsdImagingGLEngine *engine,
-                                            bool enable) {
-        engine->_sceneDelegate->SetDisplayUnloadedPrimsWithBounds(enable);
     }
 
 private:
@@ -149,6 +162,8 @@ private:
     float _pixelAspectRatio;
     GfRange2f _displayWindow;
     GfRect2i _dataWindow;
+    CameraUtilConformWindowPolicy _windowPolicy;
+
     VtDictionary _renderSettings;
     TfToken _rendererAov;
     std::string _perfStatsFile;
@@ -157,7 +172,7 @@ private:
     bool _showGuides;
     bool _showRender;
     bool _showProxy;
-    bool _clearOnce;
+    bool _presentComposite;
     bool _presentDisabled;
 };
 

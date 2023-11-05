@@ -25,8 +25,12 @@
 
 #include "pxr/usdImaging/usdImaging/dataSourceAttribute.h"
 
+#include "pxr/usd/usdLux/lightAPI.h"
+#include "pxr/usd/usdLux/lightFilter.h"
+
 #include "pxr/usd/usdShade/material.h"
 #include "pxr/usd/usdShade/materialBindingAPI.h"
+#include "pxr/usd/usdShade/nodeDefAPI.h"
 
 #include "pxr/imaging/hd/retainedDataSource.h"
 #include "pxr/imaging/hd/tokens.h"
@@ -37,21 +41,46 @@
 #include "pxr/imaging/hd/materialSchema.h"
 
 #include "pxr/base/work/utils.h"
+#include "pxr/base/tf/staticTokens.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
 namespace
 {
 
+// Strip </prefix> from </prefix/path> to yield <path>
+static SdfPath
+_RelativePath(const SdfPath &prefix, const SdfPath &path)
+{
+    return prefix.IsEmpty() ? path
+        : path.ReplacePrefix(prefix, SdfPath::ReflexiveRelativePath());
+}
+
+// Extract the render context from an output name, ex:
+// "outputs:surface" -> ""
+// "outputs:ri:surface" -> "ri"
+static TfToken
+_GetRenderContextForShaderOutput(UsdShadeOutput const& output)
+{
+    TfToken ns = output.GetAttr().GetNamespace();
+    if (TfStringStartsWith(ns, UsdShadeTokens->outputs)) {
+        return TfToken(ns.GetString().substr(UsdShadeTokens->outputs.size()));
+    }
+    // Empty namespace, e.g. "outputs:foo" -> ""
+    return TfToken();
+}
+
+static bool
+_Contains(const TfTokenVector &v, const TfToken &t)
+{
+    return std::find(v.begin(), v.end(), t) != v.end();
+}
+
+
 class _UsdImagingDataSourceShadingNodeParameters : public HdContainerDataSource
 {
 public:
     HD_DECLARE_DATASOURCE(_UsdImagingDataSourceShadingNodeParameters);
-
-    bool Has(const TfToken &name) override
-    {
-        return Get(name) != nullptr;
-    }
 
     TfTokenVector GetNames() override
     {
@@ -64,6 +93,14 @@ public:
             UsdAttribute attr(input.GetValueProducingAttribute(&attrType));
             if (attrType == UsdShadeAttributeType::Input) {
                 result.push_back(input.GetBaseName());
+
+                // If the attribute has a colorspace add 'colorSpace:attrName'
+                // to the result
+                if (attr.HasColorSpace()) {
+                    TfToken colorSpaceInputName(SdfPath::JoinIdentifier(
+                        SdfFieldKeys->ColorSpace, input.GetBaseName()));
+                    result.push_back(colorSpaceInputName);
+                }
             }
         }
         return result;
@@ -71,6 +108,22 @@ public:
 
     HdDataSourceBaseHandle Get(const TfToken &name) override
     {
+        // If this is a colorspace attribute the name will be of the form
+        // 'colorSpace:attrName'
+        const std::pair<std::string, bool> result =
+            SdfPath::StripPrefixNamespace(
+                name.GetString(), SdfFieldKeys->ColorSpace.GetString());
+        if (result.second) {
+            UsdShadeInput input = _shaderNode.GetInput(TfToken(result.first));
+            UsdShadeAttributeType attrType;
+            UsdAttribute attr = input.GetValueProducingAttribute(&attrType);
+            if (attrType == UsdShadeAttributeType::Input && 
+                attr.HasColorSpace()) {
+                return HdRetainedSampledDataSource::New(
+                    VtValue(attr.GetColorSpace()));
+            }
+        }
+
         UsdShadeInput input = _shaderNode.GetInput(name);
         if (!input.IsDefined()) {
             return nullptr;
@@ -79,7 +132,26 @@ public:
         UsdShadeAttributeType attrType;
         UsdAttribute attr = input.GetValueProducingAttribute(&attrType);
         if (attrType == UsdShadeAttributeType::Input) {
-            return UsdImagingDataSourceAttributeNew(attr, _stageGlobals);
+            return UsdImagingDataSourceAttributeNew(attr, _stageGlobals,
+                _sceneIndexPath,
+                    _locatorPrefix.IsEmpty()
+                        ? _locatorPrefix
+                        : _locatorPrefix.Append(name));
+        }
+
+        // fallback case for requested but unauthored inputs on lights or
+        // light filters -- which will not return a value for
+        // GetValueProducingAttribute but can still provide an attr
+        if (_shaderNode.GetPrim().HasAPI<UsdLuxLightAPI>() ||
+            _shaderNode.GetPrim().IsA<UsdLuxLightFilter>()) {
+            attr = input.GetAttr();
+            if (attr) {
+                return UsdImagingDataSourceAttributeNew(attr, _stageGlobals,
+                    _sceneIndexPath,
+                        _locatorPrefix.IsEmpty()
+                            ? _locatorPrefix
+                            : _locatorPrefix.Append(name));
+            }
         }
 
         return nullptr;
@@ -88,22 +160,25 @@ public:
 private:
     _UsdImagingDataSourceShadingNodeParameters(
         UsdShadeShader shaderNode,
-        const UsdImagingDataSourceStageGlobals &stageGlobals)
-    : _shaderNode(shaderNode), _stageGlobals(stageGlobals){}
+        const UsdImagingDataSourceStageGlobals &stageGlobals,
+        const SdfPath &sceneIndexPath,
+        const HdDataSourceLocator &locatorPrefix)
+    : _shaderNode(shaderNode)
+    , _stageGlobals(stageGlobals)
+    , _sceneIndexPath(sceneIndexPath)
+    , _locatorPrefix(locatorPrefix)
+    {}
 
     UsdShadeShader _shaderNode;
     const UsdImagingDataSourceStageGlobals &_stageGlobals;
+    SdfPath _sceneIndexPath;
+    HdDataSourceLocator _locatorPrefix;
 };
 
 class _UsdImagingDataSourceShadingNodeInputs : public HdContainerDataSource
 {
 public:
     HD_DECLARE_DATASOURCE(_UsdImagingDataSourceShadingNodeInputs);
-
-    bool Has(const TfToken &name) override
-    {
-        return Get(name) != nullptr;
-    }
 
     TfTokenVector GetNames() override
     {
@@ -139,9 +214,10 @@ public:
         elements.reserve(attrs.size());
 
         for (const UsdAttribute &attr : attrs) {
-            const TfToken outputPath(attr.GetPrim().GetPath().GetString());
-            const TfToken outputName(
-                UsdShadeOutput(attr).GetBaseName().GetString());
+            const TfToken outputPath(
+                _RelativePath(_materialPrefix, attr.GetPrim().GetPath())
+                .GetToken());
+            const TfToken outputName = UsdShadeOutput(attr).GetBaseName();
 
             elements.push_back(HdMaterialConnectionSchema::BuildRetained(
                 HdRetainedTypedSampledDataSource<TfToken>::New(outputPath),
@@ -155,27 +231,126 @@ public:
 private:
     _UsdImagingDataSourceShadingNodeInputs(
         UsdShadeShader shaderNode,
+        const UsdImagingDataSourceStageGlobals &stageGlobals,
+        const SdfPath &materialPrefix)
+    : _shaderNode(shaderNode)
+    , _stageGlobals(stageGlobals)
+    , _materialPrefix(materialPrefix)
+    {}
+
+    UsdShadeShader _shaderNode;
+    const UsdImagingDataSourceStageGlobals &_stageGlobals;
+    const SdfPath _materialPrefix;
+};
+
+template <typename T>
+class _UsdImagingDataSourceRenderContextIdentifiers
+        : public HdContainerDataSource
+{
+public:
+    HD_DECLARE_DATASOURCE(_UsdImagingDataSourceRenderContextIdentifiers);
+
+    TfTokenVector GetNames() override
+    {
+        TfTokenVector result;
+        for (const TfToken &propNameToken : _t.GetPrim().GetPropertyNames()) {
+            const std::string &propName = propNameToken.GetString();
+            static const std::string suffix =
+                ":" + UsdLuxTokens->lightShaderId.GetString();
+            if (TfStringEndsWith(propName, suffix)) {
+                result.push_back(
+                    TfToken(propName.substr(0, propName.size() - suffix.size())));
+            }
+        }
+
+        return result;
+    }
+
+    HdDataSourceBaseHandle Get(const TfToken &name) override
+    {
+        if (UsdAttribute attr = _t.GetShaderIdAttrForRenderContext(name)) {
+            TfToken shaderId;
+            if (attr.Get(&shaderId)) {
+                return HdRetainedTypedSampledDataSource<TfToken>::New(shaderId);
+            }
+        }
+
+        return nullptr;
+    }
+
+private:
+
+    _UsdImagingDataSourceRenderContextIdentifiers(
+        const T &t)
+    : _t(t){}
+
+    T _t;
+};
+
+// Populate the "nodeTypeInfo" of a node using the "info:" attributes and
+// the meta data (skipping info:id).
+class _UsdImagingNodeTypeInfoSource : public HdContainerDataSource
+{
+public:
+    HD_DECLARE_DATASOURCE(_UsdImagingNodeTypeInfoSource);
+
+    TfTokenVector GetNames() override
+    {
+        TfTokenVector names;
+        names.push_back(UsdShadeTokens->sdrMetadata);
+        // Missing metadata:
+        // subIdentifier
+        for (const TfToken &propNameToken :
+                 _shaderNode.GetPrim().GetPropertyNames()) {
+            const std::string &propName = propNameToken.GetString();
+            if (propNameToken != UsdShadeTokens->infoId &&
+                TfStringStartsWith(propName, _GetPrefix())) {
+                names.push_back(TfToken(propName.substr(_GetPrefix().size())));
+            }
+        }
+        return names;
+    }
+
+    HdDataSourceBaseHandle Get(const TfToken& name) override
+    {
+        if (name == UsdShadeTokens->sdrMetadata) {
+            VtDictionary metadata;
+            _shaderNode.GetPrim().GetMetadata(name, &metadata);
+            return HdRetainedTypedSampledDataSource<VtDictionary>::New(
+                metadata);
+        }
+
+        const TfToken attrName(_GetPrefix() + name.GetString());
+
+        if (UsdAttribute attr = _shaderNode.GetPrim().GetAttribute(attrName)) {
+            return UsdImagingDataSourceAttributeNew(attr, _stageGlobals);
+        }
+
+        return nullptr;
+    }
+
+private:
+    _UsdImagingNodeTypeInfoSource(
+        const UsdShadeShader& shaderNode,
         const UsdImagingDataSourceStageGlobals &stageGlobals)
-    : _shaderNode(shaderNode), _stageGlobals(stageGlobals){}
+      : _shaderNode(shaderNode)
+      , _stageGlobals(stageGlobals)
+    {
+    }
+
+    static const std::string &_GetPrefix() {
+        static const std::string prefix = "info:";
+        return prefix;
+    }
 
     UsdShadeShader _shaderNode;
     const UsdImagingDataSourceStageGlobals &_stageGlobals;
 };
 
-
 class _UsdImagingDataSourceShadingNode : public HdContainerDataSource
 {
 public:
     HD_DECLARE_DATASOURCE(_UsdImagingDataSourceShadingNode);
-
-    bool Has(const TfToken &name) override
-    {
-        return std::find(
-            HdMaterialNodeSchemaTokens->allTokens.begin(),
-            HdMaterialNodeSchemaTokens->allTokens.end(),
-            name)
-                != HdMaterialNodeSchemaTokens->allTokens.end();
-    }
 
     TfTokenVector GetNames() override
     {
@@ -186,18 +361,61 @@ public:
     {
         if (name == HdMaterialNodeSchemaTokens->nodeIdentifier) {
             TfToken nodeId;
+
+            // the default identifier
+            UsdShadeNodeDefAPI nodeDef(_shaderNode.GetPrim());
+            if (nodeDef) {
+                nodeDef.GetShaderId(&nodeId);
+            } else if (UsdLuxLightFilter lightFilter =
+                    UsdLuxLightFilter(_shaderNode.GetPrim())) {
+                nodeId = lightFilter.GetShaderId({});
+
+            } else if (UsdLuxLightAPI light =
+                    UsdLuxLightAPI(_shaderNode.GetPrim())) {
+                nodeId = light.GetShaderId({});
+            }
+
             _shaderNode.GetShaderId(&nodeId);
             return HdRetainedTypedSampledDataSource<TfToken>::New(nodeId);
         }
 
+        if (name == HdMaterialNodeSchemaTokens->renderContextNodeIdentifiers) {
+            if (UsdLuxLightAPI light =
+                    UsdLuxLightAPI(_shaderNode.GetPrim())) {
+                return _UsdImagingDataSourceRenderContextIdentifiers<
+                    UsdLuxLightAPI>::New(light);
+            }
+            if (UsdLuxLightFilter lightFilter =
+                    UsdLuxLightFilter(_shaderNode.GetPrim())) {
+                return _UsdImagingDataSourceRenderContextIdentifiers<
+                    UsdLuxLightFilter>::New(lightFilter);
+            }
+            return nullptr;
+            
+        }
+        if (name == HdMaterialNodeSchemaTokens->nodeTypeInfo) {
+            if (_shaderNode.GetImplementationSource() != UsdShadeTokens->id) {
+                return _UsdImagingNodeTypeInfoSource::New(
+                    _shaderNode, _stageGlobals);
+            }
+            return nullptr;
+        }
+
         if (name == HdMaterialNodeSchemaTokens->parameters) {
             return _UsdImagingDataSourceShadingNodeParameters::New(
-                _shaderNode, _stageGlobals);
+                _shaderNode, _stageGlobals, _sceneIndexPath,
+                    _locatorPrefix.IsEmpty()
+                        ? _locatorPrefix
+                        : _locatorPrefix
+                            .Append(_shaderNode.GetPrim().GetPath().GetToken())
+                            .Append(HdMaterialNodeSchemaTokens->parameters)
+                            );
+
         }
 
         if (name == HdMaterialNodeSchemaTokens->inputConnections) {
             return _UsdImagingDataSourceShadingNodeInputs::New(
-                _shaderNode, _stageGlobals);
+                _shaderNode, _stageGlobals, _materialPrefix);
         }
 
         return nullptr;
@@ -206,11 +424,22 @@ public:
 private:
     _UsdImagingDataSourceShadingNode(
         UsdShadeShader shaderNode,
-        const UsdImagingDataSourceStageGlobals &stageGlobals)
-    : _shaderNode(shaderNode), _stageGlobals(stageGlobals){}
+        const UsdImagingDataSourceStageGlobals &stageGlobals,
+        const SdfPath &sceneIndexPath,
+        const HdDataSourceLocator &locatorPrefix,
+        const SdfPath &materialPrefix)
+    : _shaderNode(shaderNode)
+    , _stageGlobals(stageGlobals)
+    , _sceneIndexPath(sceneIndexPath)
+    , _locatorPrefix(locatorPrefix)
+    , _materialPrefix(materialPrefix)
+    {}
 
     UsdShadeShader _shaderNode;
     const UsdImagingDataSourceStageGlobals &_stageGlobals;
+    SdfPath _sceneIndexPath;
+    HdDataSourceLocator _locatorPrefix;
+    const SdfPath _materialPrefix;
 };
 
 
@@ -219,10 +448,12 @@ private:
 // ----------------------------------------------------------------------------
 
 UsdImagingDataSourceMaterial::UsdImagingDataSourceMaterial(
-    UsdPrim usdPrim,
-    const UsdImagingDataSourceStageGlobals & stageGlobals)
+    const UsdPrim &usdPrim,
+    const UsdImagingDataSourceStageGlobals & stageGlobals,
+    const TfToken &fixedTerminalName)
 : _usdPrim(usdPrim)
 , _stageGlobals(stageGlobals)
+, _fixedTerminalName(fixedTerminalName)
 {
 }
 
@@ -231,32 +462,25 @@ UsdImagingDataSourceMaterial::~UsdImagingDataSourceMaterial()
     WorkMoveDestroyAsync(_networks);
 }
 
-bool 
-UsdImagingDataSourceMaterial::Has(const TfToken & name)
-{
-    // The only way to tell if a protocol is present is to compute it. We
-    // cache the networks so that we won't do the work again when we call Get().
-    if (Get(name) != nullptr) {
-        return true;
-    }
-    return false;
-}
-
 TfTokenVector 
 UsdImagingDataSourceMaterial::GetNames()
 {
-    // Just return the universal render context here, though we may return
-    // networks for other protocols.
+    if (!_fixedTerminalName.IsEmpty()) {
+        return { HdMaterialSchemaTokens->universalRenderContext };
+    }
 
-    // NOTE: We do want to be able to return all render contexts but don't
-    //       want to rely on the render delegate answering this question as
-    //       scene indices may be observed by multiple render delegates at
-    //       once. We will likely need to base this on available connections
-    //       of the material prim itself.
-
-    TfTokenVector result;
-    result.push_back(HdMaterialSchemaTokens->universalRenderContext);
-    return result;
+    TfTokenVector renderContexts;
+    for (const UsdShadeOutput &output :
+             UsdShadeNodeGraph(_usdPrim).GetOutputs()) {
+        const TfToken renderContext = _GetRenderContextForShaderOutput(output);
+        // Only add a renderContext if it has not been added before so
+        // we do not have duplicates (there may be multiple outputs for
+        // the same context).
+        if (!_Contains(renderContexts, renderContext)) {
+            renderContexts.push_back(renderContext);
+        }
+    }
+    return renderContexts;
 }
 
 using _TokenDataSourceMap =
@@ -264,9 +488,12 @@ using _TokenDataSourceMap =
 
 static void
 _WalkGraph(
-    UsdShadeShader const &shadeNode,
-    _TokenDataSourceMap *outputNodes,
-    const UsdImagingDataSourceStageGlobals &stageGlobals)
+    UsdShadeConnectableAPI const &shadeNode,
+    _TokenDataSourceMap * const outputNodes,
+    const UsdImagingDataSourceStageGlobals &stageGlobals,
+    const SdfPath &sceneIndexPath,
+    const HdDataSourceLocator &locatorPrefix,
+    const SdfPath &materialPrefix = SdfPath())
 {
     if (!shadeNode) {
         return;
@@ -278,54 +505,124 @@ _WalkGraph(
         return;
     }
 
-    TfToken const nodeName(nodePath.GetString());
+    TfToken const nodeName = _RelativePath(materialPrefix, nodePath).GetToken();
     if (outputNodes->find(nodeName) != outputNodes->end()) {
         return;
     }
 
+    HdDataSourceBaseHandle nodeValue =
+        _UsdImagingDataSourceShadingNode::New(
+            shadeNode, stageGlobals, sceneIndexPath,
+            locatorPrefix, materialPrefix);
+
+    outputNodes->insert({nodeName, nodeValue});
+
     // Visit inputs of this node to ensure they are emitted first.
-    const std::vector<UsdShadeInput> shadeNodeInputs = shadeNode.GetInputs();
-
-    for (UsdShadeInput const & input: shadeNodeInputs) {
-        TfToken const inputName = input.GetBaseName();
-
-        UsdShadeAttributeVector attrs =
-            input.GetValueProducingAttributes(/*shaderOutputsOnly =*/ true);
-
-        if (attrs.empty()) {
-            continue;
-        }
-
-        for (const UsdAttribute &attr : attrs) {
+    for (UsdShadeInput const & input: shadeNode.GetInputs()) {
+        for (const UsdAttribute &attr :
+             input.GetValueProducingAttributes(/*shaderOutputsOnly =*/ true)) {
             _WalkGraph(
-                UsdShadeShader(attr.GetPrim()),
+                UsdShadeConnectableAPI(attr.GetPrim()),
                 outputNodes,
-                stageGlobals);
+                stageGlobals,
+                sceneIndexPath,
+                locatorPrefix,
+                materialPrefix);
         }
     }
 
-    HdDataSourceBaseHandle nodeValue =
-        _UsdImagingDataSourceShadingNode::New(shadeNode, stageGlobals);
+}
 
-    outputNodes->insert({nodeName, nodeValue});
+static
+HdDataSourceBaseHandle
+_BuildNetwork(
+    UsdShadeConnectableAPI const &terminalNode,
+    const TfToken &terminalName,
+    UsdImagingDataSourceStageGlobals const &stageGlobals,
+    TfToken const& context,
+    const SdfPath &sceneIndexPath,
+    const HdDataSourceLocator &locatorPrefix)
+{
+
+    _TokenDataSourceMap nodeDataSources;
+    _WalkGraph(terminalNode,
+                &nodeDataSources,
+                stageGlobals,
+                sceneIndexPath,
+                locatorPrefix.IsEmpty()
+                    ? locatorPrefix
+                    : locatorPrefix.Append(
+                        HdMaterialNetworkSchemaTokens->nodes));
+
+    TfTokenVector nodeNames;
+    std::vector<HdDataSourceBaseHandle> nodeValues;
+    nodeNames.reserve(nodeDataSources.size());
+    nodeValues.reserve(nodeDataSources.size());
+    for (const auto &tokenDsPair : nodeDataSources) {
+        nodeNames.push_back(tokenDsPair.first);
+        nodeValues.push_back(tokenDsPair.second);
+    }
+
+
+    HdContainerDataSourceHandle terminalsDs = 
+        HdRetainedContainerDataSource::New(
+            terminalName,
+            HdMaterialConnectionSchema::BuildRetained(
+                HdRetainedTypedSampledDataSource<TfToken>::New(
+                    terminalNode.GetPrim().GetPath().GetToken()),
+                HdRetainedTypedSampledDataSource<TfToken>::New(
+                    terminalName)));
+
+    HdContainerDataSourceHandle nodesDs = 
+        HdRetainedContainerDataSource::New(
+            nodeNames.size(),
+            nodeNames.data(),
+            nodeValues.data());
+
+    return HdMaterialNetworkSchema::BuildRetained(
+        nodesDs,
+        terminalsDs);
 }
 
 static 
 HdDataSourceBaseHandle
 _BuildMaterial(
-    UsdShadeMaterial const &usdMat, 
+    UsdShadeNodeGraph const &usdMat, 
     UsdImagingDataSourceStageGlobals const &stageGlobals,
-    TfToken const& context)
+    TfToken const& context,
+    const SdfPath &sceneIndexPath,
+    const HdDataSourceLocator &locatorPrefix)
 {
+    TRACE_FUNCTION();
+
     TfTokenVector terminalsNames;
     std::vector<HdDataSourceBaseHandle> terminalsValues;
     TfTokenVector nodeNames;
     std::vector<HdDataSourceBaseHandle> nodeValues;
 
+    // Strip the material path prefix from all node names.
+    // This makes the network more concise to read, as well
+    // as enables the potential to detect duplication as
+    // the same network appears under different scene models.
+    const SdfPath materialPrefix = usdMat.GetPrim().GetPath();
+
     _TokenDataSourceMap nodeDataSources;
 
     for (UsdShadeOutput &output : usdMat.GetOutputs()) {
+        // Skip terminals from other contexts.
+        if (_GetRenderContextForShaderOutput(output) != context) {
+            continue;
+        }
+
+        // E.g. "ri:surface"
         TfToken outputName = output.GetBaseName();
+
+        // Strip the context, if there is one.
+        if (!context.IsEmpty()) {
+            // Skip the context and subsequent ':'
+            outputName = TfToken(
+                outputName.GetString().substr(context.size()+1));
+        }
 
         for (const UsdShadeConnectionSourceInfo &sourceInfo :
                 output.GetConnectedSources()) {
@@ -333,17 +630,27 @@ _BuildMaterial(
                 continue;
             }
 
-            UsdShadeShader upstreamShader =
-                UsdShadeShader(sourceInfo.source.GetPrim());
+            UsdShadeConnectableAPI upstreamShader(sourceInfo.source.GetPrim());
 
             _WalkGraph(upstreamShader,
                 &nodeDataSources,
-                stageGlobals);
+                stageGlobals,
+                sceneIndexPath,
+                locatorPrefix.IsEmpty()
+                    ? locatorPrefix
+                    : locatorPrefix.Append(
+                        HdMaterialNetworkSchemaTokens->nodes),
+                materialPrefix);
 
             terminalsNames.push_back(outputName);
+
+            // Strip materialPrefix.
+            SdfPath upstreamPath =
+                _RelativePath(materialPrefix, upstreamShader.GetPath());
+
             terminalsValues.push_back(HdMaterialConnectionSchema::BuildRetained(
                 HdRetainedTypedSampledDataSource<TfToken>::New(
-                    TfToken(upstreamShader.GetPath().GetString())),
+                    upstreamPath.GetToken()),
                 HdRetainedTypedSampledDataSource<TfToken>::New(
                     sourceInfo.sourceName)));
         }
@@ -392,12 +699,87 @@ UsdImagingDataSourceMaterial::Get(const TfToken &name)
         return it->second;
     }
 
-    HdDataSourceBaseHandle networkDs = _BuildMaterial(
-        UsdShadeMaterial(_usdPrim), _stageGlobals, name);
+    HdDataSourceBaseHandle networkDs;
+
+    // sceneIndexPath and dataSourceLocator are sent along so that discovery
+    // of time-varying shader parameters are managed for the hydra material
+    // prim and not individual USD shader prims.
+
+    if (_fixedTerminalName.IsEmpty()) {
+        networkDs = _BuildMaterial(
+            UsdShadeNodeGraph(_usdPrim), _stageGlobals, name,
+            _usdPrim.GetPath(),
+            HdMaterialSchema::GetDefaultLocator().Append(name));
+    } else {
+        networkDs = _BuildNetwork(
+            UsdShadeConnectableAPI(_usdPrim),
+            _fixedTerminalName, _stageGlobals, name,
+            _usdPrim.GetPath(),
+            HdMaterialSchema::GetDefaultLocator().Append(name));
+    }
+
 
     _networks[name] = networkDs;
     return networkDs;
 }
 
+UsdImagingDataSourceMaterialPrim::UsdImagingDataSourceMaterialPrim(
+    const SdfPath &sceneIndexPath,
+    const UsdPrim &usdPrim,
+    const UsdImagingDataSourceStageGlobals &stageGlobals)
+ : UsdImagingDataSourcePrim(sceneIndexPath, usdPrim, stageGlobals)
+{
+}
+
+UsdImagingDataSourceMaterialPrim::~UsdImagingDataSourceMaterialPrim() = default;
+
+TfTokenVector
+UsdImagingDataSourceMaterialPrim::GetNames()
+{
+    TfTokenVector result = UsdImagingDataSourcePrim::GetNames();
+    result.push_back(HdMaterialSchema::GetSchemaToken());
+    return result;
+}
+
+HdDataSourceBaseHandle
+UsdImagingDataSourceMaterialPrim::Get(const TfToken &name)
+{
+    if (name == HdMaterialSchema::GetSchemaToken()) {
+        return UsdImagingDataSourceMaterial::New(
+            _GetUsdPrim(),
+            _GetStageGlobals());
+    }
+    return UsdImagingDataSourcePrim::Get(name);
+}
+
+HdDataSourceLocatorSet
+UsdImagingDataSourceMaterialPrim::Invalidate(
+    UsdPrim const& prim,
+    const TfToken &subprim,
+    const TfTokenVector &properties,
+    const UsdImagingPropertyInvalidationType invalidationType)
+{
+    HdDataSourceLocatorSet result =
+        UsdImagingDataSourcePrim::Invalidate(
+            prim, subprim, properties, invalidationType);
+
+    if (subprim.IsEmpty()) {
+        UsdShadeMaterial material(prim);
+        if (material) {
+            // Public interface values changes
+            for (const TfToken &propertyName : properties) {
+                if (UsdShadeInput::IsInterfaceInputName(
+                        propertyName.GetString())) {
+                    // TODO, invalidate specifically connected node parameters.
+                    // FOR NOW: just dirty the whole material.
+
+                    result.insert(HdMaterialSchema::GetDefaultLocator());
+                    break;
+                }
+            }
+        }
+    }
+    return result;
+}
 
 PXR_NAMESPACE_CLOSE_SCOPE

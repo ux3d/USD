@@ -29,6 +29,7 @@
 #include "pxr/base/vt/streamOut.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/base/vt/functions.h"
+#include "pxr/base/vt/visitValue.h"
 
 #include "pxr/base/gf/matrix2f.h"
 #include "pxr/base/gf/matrix2d.h"
@@ -62,6 +63,7 @@
 #include "pxr/base/tf/stopwatch.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/tf/enum.h"
+#include "pxr/base/tf/stringUtils.h"
 #include "pxr/base/tf/type.h"
 #include "pxr/base/tf/fileUtils.h"
 #include "pxr/base/tf/span.h"
@@ -69,13 +71,15 @@
 #include "pxr/base/arch/defines.h"
 #include "pxr/base/arch/fileSystem.h"
 
-#include <boost/scoped_ptr.hpp>
-
 #include <cstdio>
+#include <cmath>
 #include <iterator>
 #include <iostream>
 #include <limits>
+#include <new>
+#include <memory>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using std::string;
@@ -87,7 +91,6 @@ PXR_NAMESPACE_USING_DIRECTIVE
 static void die(const std::string &msg) {
     TF_FATAL_ERROR("ERROR: %s failed.", msg.c_str());
 }
-
 
 static void testArray() {
 
@@ -216,6 +219,13 @@ static void testArray() {
 
         TF_AXIOM(array.size() == 5);
 
+        array.resize(10, 9.99);
+        TF_AXIOM(array.size() == 10);
+        TF_AXIOM(array[5] == 9.99 &&
+                 array[6] == 9.99 &&
+                 array[7] == 9.99 &&
+                 array[8] == 9.99 &&
+                 array[9] == 9.99);
     }
 
     {
@@ -507,6 +517,36 @@ static void testArray() {
         TF_AXIOM(array.back() == "aloha");
         TF_AXIOM(array.cback() == "aloha");
         TF_AXIOM(aloha == "aloha");
+    }
+    {
+        // Test that attempts to create overly large arrays throw
+        // std::bad_alloc
+
+        VtIntArray ia;
+        try {
+            ia.resize(std::numeric_limits<size_t>::max());
+            TF_FATAL_ERROR("Did not throw std::bad_alloc");
+        }
+        catch (std::bad_alloc const &) {
+            // pass
+        }
+
+        VtDoubleArray da;
+        try {
+            da.reserve(std::numeric_limits<size_t>::max() / 2);
+            TF_FATAL_ERROR("Did not throw std::bad_alloc");
+        }
+        catch (std::bad_alloc const &) {
+            // pass
+        }
+        
+        try {
+            da.resize(ia.max_size() + 1);
+            TF_FATAL_ERROR("Did not throw std::bad_alloc");
+        }
+        catch (std::bad_alloc const &) {
+            // pass
+        }
     }
 }
 
@@ -839,7 +879,7 @@ testDictionaryIterators()
         VtDictionary::iterator i = a.find(key2.first);
 
         {
-            boost::scoped_ptr<VtDictionary> b(new VtDictionary(a));
+            std::unique_ptr<VtDictionary> b = std::make_unique<VtDictionary>(a);
             a.insert(std::make_pair(key3.first, key3.second));
         }
 
@@ -871,7 +911,7 @@ testDictionaryIterators()
         VtDictionary::const_iterator i = a.find(key2.first);
         VtDictionary::const_iterator j = expected.find(key2.first);
         {
-            boost::scoped_ptr<VtDictionary> b(new VtDictionary(a));
+            std::unique_ptr<VtDictionary> b = std::make_unique<VtDictionary>(a);
             VtDictionary::value_type v(key3.first, key3.second);
             a.insert(v);
             expected.insert(v);
@@ -889,7 +929,7 @@ testDictionaryIterators()
         VtDictionary a = {key1, key2};
         VtDictionary::const_iterator i = a.find(key1.first);
         {
-            boost::scoped_ptr<VtDictionary> b(new VtDictionary(a));
+            std::unique_ptr<VtDictionary> b = std::make_unique<VtDictionary>(a);
             a[key1.first] = VtValue(12);
         }
 
@@ -1461,6 +1501,16 @@ static void testValue() {
         t = v.UncheckedRemove<string>();
         TF_AXIOM(t == "hello world!");
         TF_AXIOM(v.IsEmpty());
+
+        // Held value mutation.
+        v = t;
+        TF_AXIOM(v.Mutate<string>([](std::string &str) { str += "!"; }));
+        TF_AXIOM(v.Get<string>() == "hello world!!");
+        v.UncheckedMutate<string>([](std::string &str) { str += "!"; });
+        TF_AXIOM(v.Get<string>() == "hello world!!!");
+
+        TF_AXIOM(!v.Mutate<int>([](int &i) { ++i; }));
+        TF_AXIOM(v.Get<string>() == "hello world!!!");
     }
 
     // Test calling Get with incorrect type.  Should issue an error and produce
@@ -1516,6 +1566,9 @@ static void
 testValueHash()
 {
     static_assert(VtIsHashable<int>(), "");
+    static_assert(VtIsHashable<double>(), "");
+    static_assert(VtIsHashable<GfVec3f>(), "");
+    static_assert(VtIsHashable<std::string>(), "");
     static_assert(!VtIsHashable<_Unhashable>(), "");
 
     VtValue vHashable{1};
@@ -1539,6 +1592,14 @@ testValueHash()
         TF_AXIOM(!m.IsClean());
         m.Clear();
     }
+}
+
+static void
+testArrayHash()
+{
+    VtArray<int> array = {1, 2, 3, 4, 5, 10, 100};
+    TF_AXIOM(TfHash()(array) == TfHash()(array));
+    TF_AXIOM(TfHash()(array) == TfHash()(VtArray<int>(array)));
 }
 
 template <class T>
@@ -1684,6 +1745,135 @@ testCombinedVtValueProxies()
     TF_AXIOM(eproxy.IsHolding<_TypedProxy<double>>());
 }
 
+struct Stringify
+{
+    std::string operator()(int x) const {
+        return TfStringPrintf("int: %d", x);
+    };
+
+    std::string operator()(double x) const {
+        return TfStringPrintf("double: %.2f", x);
+    }
+
+    std::string operator()(std::string const &str) const {
+        return TfStringPrintf("string: '%s'", str.c_str());
+    };
+
+    template <class T>
+    std::string operator()(VtArray<T> const &arr) const {
+        return TfStringPrintf("array: sz=%zu", arr.size());
+    }
+    
+    std::string operator()(VtValue const &unknown) const {
+        return "unknown type";
+    }
+};
+
+struct RoundOrMinusOne
+{
+    int operator()(int x) const { return x; }
+
+    int operator()(double x) const { return static_cast<int>(rint(x)); }
+
+    int operator()(VtValue const &val) const { return -1; }
+};
+
+struct GetArraySize
+{
+    template <class T>
+    size_t operator()(VtArray<T> const &array) const {
+        return array.size();
+    }
+
+    size_t operator()(VtValue const &val) const {
+        return ~0;
+    }
+};
+
+static void
+testVisitValue()
+{
+    VtValue iv(123);
+    VtValue dv(1.23);
+    VtValue fv(2.34f);
+    VtValue hv(GfHalf(3.45));
+    VtValue sv(std::string("hello"));
+    VtValue av(VtArray<float>(123));
+    VtValue ov(std::vector<float>(123));
+
+    TF_AXIOM(VtVisitValue(iv, Stringify()) == "int: 123");
+    TF_AXIOM(VtVisitValue(dv, Stringify()) == "double: 1.23");
+    TF_AXIOM(VtVisitValue(fv, Stringify()) == "double: 2.34");
+    TF_AXIOM(VtVisitValue(hv, Stringify()) == "double: 3.45");
+    TF_AXIOM(VtVisitValue(sv, Stringify()) == "string: 'hello'");
+    TF_AXIOM(VtVisitValue(av, Stringify()) == "array: sz=123");
+    TF_AXIOM(VtVisitValue(ov, Stringify()) == "unknown type");
+    
+    TF_AXIOM(VtVisitValue(iv, RoundOrMinusOne()) == 123);
+    TF_AXIOM(VtVisitValue(dv, RoundOrMinusOne()) == 1);
+    TF_AXIOM(VtVisitValue(fv, RoundOrMinusOne()) == 2);
+    TF_AXIOM(VtVisitValue(hv, RoundOrMinusOne()) == 3);
+    TF_AXIOM(VtVisitValue(sv, RoundOrMinusOne()) == -1);
+    TF_AXIOM(VtVisitValue(av, RoundOrMinusOne()) == -1);
+    TF_AXIOM(VtVisitValue(ov, RoundOrMinusOne()) == -1);
+    
+    TF_AXIOM(VtVisitValue(av, GetArraySize()) == 123);
+    TF_AXIOM(VtVisitValue(iv, GetArraySize()) == size_t(~0));
+    TF_AXIOM(VtVisitValue(
+                 VtValue(VtArray<GfVec3d>(234)), GetArraySize()) == 234);
+
+}
+
+template <typename T>
+static void
+AssertIsHoldingKnownType(const VtValue &val)
+{
+    switch (val.GetKnownValueTypeIndex()) {
+    case VtGetKnownValueTypeIndex<T>():
+        break;
+    default:
+        TF_FATAL_ERROR("Expected %s (index=%d); got index %d",
+                       ArchGetDemangled<T>().c_str(),
+                       VtGetKnownValueTypeIndex<T>(),
+                       val.GetKnownValueTypeIndex());
+    }
+}
+
+struct TypeNotKnownToVt {};
+
+static void
+testKnownValueTypeIndex()
+{
+    VtValue iv(123);
+    VtValue dv(1.23);
+    VtValue fv(2.34f);
+    VtValue hv(GfHalf(3.45));
+    VtValue sv(std::string("hello"));
+    VtValue av(VtArray<float>(123));
+
+    AssertIsHoldingKnownType<int>(iv);
+    AssertIsHoldingKnownType<double>(dv);
+    AssertIsHoldingKnownType<float>(fv);
+    AssertIsHoldingKnownType<GfHalf>(hv);
+    AssertIsHoldingKnownType<std::string>(sv);
+    AssertIsHoldingKnownType<VtArray<float>>(av);
+
+    TF_AXIOM(VtIsKnownValueType<int>());
+    TF_AXIOM(VtIsKnownValueType<VtArray<GfVec3d>>());
+    TF_AXIOM(!VtIsKnownValueType<void>());
+    TF_AXIOM(!VtIsKnownValueType<TypeNotKnownToVt>());
+}
+
+static void testVtCheapToCopy() {
+    static_assert(VtValueTypeHasCheapCopy<float>::value, "");
+    static_assert(VtValueTypeHasCheapCopy<int>::value, "");
+    static_assert(VtValueTypeHasCheapCopy<GfVec3d>::value, "");
+    static_assert(VtValueTypeHasCheapCopy<TfToken>::value, "");
+    static_assert(!VtValueTypeHasCheapCopy<std::string>::value, "");
+    static_assert(!VtValueTypeHasCheapCopy<VtArray<float>>::value, "");
+    static_assert(!VtValueTypeHasCheapCopy<VtArray<TfToken>>::value, "");
+}
+
 int main(int argc, char *argv[])
 {
     testArray();
@@ -1697,9 +1887,14 @@ int main(int argc, char *argv[])
 
     testValue();
     testValueHash();
+    testArrayHash();
     testTypedVtValueProxy();
     testErasedVtValueProxy();
     testCombinedVtValueProxies();
+
+    testVisitValue();
+    testKnownValueTypeIndex();
+    testVtCheapToCopy();
 
     printf("Test SUCCEEDED\n");
 

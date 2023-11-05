@@ -29,6 +29,7 @@
 #include "pxr/usd/pcp/composeSite.h"
 #include "pxr/usd/pcp/dependency.h"
 #include "pxr/usd/pcp/dynamicFileFormatDependencyData.h"
+#include "pxr/usd/pcp/expressionVariablesDependencyData.h"
 #include "pxr/usd/pcp/errors.h"
 #include "pxr/usd/pcp/iterator.h"
 #include "pxr/usd/pcp/node.h"
@@ -84,11 +85,17 @@ public:
     PCP_API
     PcpPrimIndex(const PcpPrimIndex& rhs);
 
+    /// Move-construction
+    PcpPrimIndex(PcpPrimIndex &&rhs) noexcept = default;
+
     /// Assignment.
     PcpPrimIndex &operator=(const PcpPrimIndex &rhs) {
         PcpPrimIndex(rhs).Swap(*this);
         return *this;
     }
+
+    // Move-assignment.
+    PcpPrimIndex &operator=(PcpPrimIndex &&rhs) noexcept = default;
 
     /// Swap the contents of this prim index with \p index.
     PCP_API
@@ -101,10 +108,13 @@ public:
     /// A default-constructed index is invalid.
     bool IsValid() const { return bool(_graph); }
 
-    PCP_API
-    void SetGraph(const PcpPrimIndex_GraphRefPtr& graph);
-    PCP_API
-    PcpPrimIndex_GraphPtr GetGraph() const;
+    void SetGraph(const PcpPrimIndex_GraphRefPtr& graph) {
+        _graph = graph;
+    }
+
+    const PcpPrimIndex_GraphRefPtr &GetGraph() const {
+        return _graph;
+    }
 
     /// Returns the root node of the prim index graph.
     PCP_API
@@ -150,6 +160,18 @@ public:
     /// By default, this returns a range encompassing the entire index.
     PCP_API
     PcpNodeRange GetNodeRange(PcpRangeType rangeType = PcpRangeTypeAll) const;
+
+    /// Returns the node iterator that points to the given \p node if the
+    /// node is in the prim index graph.
+    /// Returns the end of the node range if the node is not contained in this
+    /// prim index.
+    PCP_API
+    PcpNodeIterator GetNodeIteratorAtNode(const PcpNodeRef &node) const;
+
+    /// Returns range of iterators that encompass the given \p node and all of
+    /// its descendants in strong-to-weak order.
+    PCP_API
+    PcpNodeRange GetNodeSubtreeRange(const PcpNodeRef &node) const;
 
     /// Returns range of iterators that encompasses all prims, in
     /// strong-to-weak order.
@@ -302,17 +324,12 @@ public:
     /// value was requested for. 
     PcpDynamicFileFormatDependencyData dynamicFileFormatDependency;
 
+    /// Dependencies on expression variables from composition arcs in this
+    /// prim index.
+    PcpExpressionVariablesDependencyData expressionVariablesDependency;
+
     /// Site dependencies from nodes in the prim index that have been culled.
     std::vector<PcpCulledDependency> culledDependencies;
-
-    /// Swap content with \p r.
-    inline void swap(PcpPrimIndexOutputs &r) {
-        primIndex.swap(r.primIndex);
-        allErrors.swap(r.allErrors);
-        std::swap(payloadState, r.payloadState);
-        dynamicFileFormatDependency.swap(r.dynamicFileFormatDependency);
-        culledDependencies.swap(r.culledDependencies);
-    }
 
     /// Appends the outputs from \p childOutputs to this object, using 
     /// \p arcToParent to connect \p childOutputs' prim index to this object's
@@ -324,9 +341,6 @@ public:
                       const PcpArc& arcToParent,
                       PcpErrorBasePtr *error);
 };
-
-/// Free function version for generic code and ADL.
-inline void swap(PcpPrimIndexOutputs &l, PcpPrimIndexOutputs &r) { l.swap(r); }
 
 /// \class PcpPrimIndexInputs
 ///

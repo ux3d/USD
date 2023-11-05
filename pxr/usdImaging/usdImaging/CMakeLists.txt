@@ -9,7 +9,10 @@ pxr_library(usdImaging
         trace
         vt
         work
+        geomUtil
         hd
+        hdar
+        hio
         pxOsd
         sdf
         usd
@@ -33,20 +36,32 @@ pxr_library(usdImaging
         dataSourceGprim
         dataSourceMaterial
         dataSourceMesh
+        dataSourceNurbsCurves
+        dataSourceNurbsPatch
+        dataSourcePointInstancer
         dataSourcePoints
         dataSourcePrim
         dataSourcePrimvars
         dataSourceRelationship
+        dataSourceRenderPrims
+        dataSourceStage
         dataSourceStageGlobals
+        dataSourceUsdPrimInfo
         dataSourceVolume
         debugCodes
         delegate
+        drawModeAdapter
+        drawModeSceneIndex
+        extentResolvingSceneIndex
+        extentsHintSchema
         indexProxy
         materialParamUtils
         modelSchema
+        primvarUtils
         resolvedAttributeCache
         instancerContext
         stageSceneIndex
+        selectionSceneIndex
         tokens
         apiSchemaAdapter
         basisCurvesAdapter
@@ -55,25 +70,33 @@ pxr_library(usdImaging
         collectionAPIAdapter
         coneAdapter
         coordSysAdapter
+        coordSysAPIAdapter
         cubeAdapter
         cylinderAdapter
         cylinderLightAdapter
         diskLightAdapter
         distantLightAdapter
         domeLightAdapter
+        domeLight_1Adapter
         fieldAdapter
+        flattenedDataSourceProviders
+        flattenedModelDataSourceProvider
         geometryLightAdapter
+        geomModelAPIAdapter
         gprimAdapter
         hermiteCurvesAdapter
         implicitSurfaceMeshUtils
         instanceAdapter
         lightAdapter
+        lightAPIAdapter
         lightFilterAdapter
         materialAdapter
         materialBindingAPIAdapter
         meshAdapter
+        niPrototypePropagatingSceneIndex
         nurbsCurvesAdapter
         nurbsPatchAdapter
+        piPrototypePropagatingSceneIndex
         planeAdapter
         pluginLightAdapter
         pluginLightFilterAdapter
@@ -82,16 +105,37 @@ pxr_library(usdImaging
         portalLightAdapter
         primAdapter
         primvarDescCache
+        rootOverridesSceneIndex
+        unloadedDrawModeSceneIndex
+        usdPrimInfoSchema
+        usdRenderProductSchema
+        usdRenderSettingsSchema
+        usdRenderVarSchema
         rectLightAdapter
+        renderProductAdapter
         renderSettingsAdapter
-        sampleFilterAdapter
+        renderSettingsFlatteningSceneIndex
+        renderVarAdapter
+        representedByAncestorPrimAdapter
+        rerootingSceneIndex
+        sceneIndices
         sphereAdapter
         sphereLightAdapter
         textureUtils
         volumeAdapter
 
+    PRIVATE_CLASSES
+        adapterManager
+        drawModeStandin
+        niInstanceAggregationSceneIndex
+        niPrototypePruningSceneIndex
+        niPrototypeSceneIndex
+        piPrototypeSceneIndex
+
     PUBLIC_HEADERS
         api.h
+        dataSourceSchemaBased.h
+        types.h
         unitTestHelper.h
         version.h
 

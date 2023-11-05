@@ -34,9 +34,7 @@
 #include "pxr/base/arch/math.h"
 #include "pxr/base/arch/vsnprintf.h"
 
-#include <boost/type_traits/is_signed.hpp>
-#include <boost/utility/enable_if.hpp>
-
+#include <algorithm>
 #include <climits>
 #include <cstdarg>
 #include <ctype.h>
@@ -44,6 +42,7 @@
 #include <string>
 #include <utility>
 #include <tuple>
+#include <type_traits>
 #include <vector>
 #include <memory>
 
@@ -124,7 +123,7 @@ TfStringToDouble(const string& s)
 // return that minimum representable value and set *outOfRange to true (if
 // outOfRange is not NULL).
 template <class Int>
-static typename boost::enable_if<boost::is_signed<Int>, Int>::type
+static std::enable_if_t<std::is_signed<Int>::value, Int>
 _StringToNegative(const char *p, bool *outOfRange)
 {
     const Int M = std::numeric_limits<Int>::min();
@@ -379,9 +378,11 @@ TfStringTrimLeft(const string &s, const char* trimChars)
 string
 TfStringTrim(const string &s, const char* trimChars)
 {
-    string::size_type i = s.find_first_not_of(trimChars);
-    string tmp = (i == string::npos) ? string() : s.substr(i);
-    return tmp.substr( 0, tmp.find_last_not_of(trimChars) + 1);
+    string::size_type b = s.find_first_not_of(trimChars);
+    if (b == string::npos) {
+        return string();
+    }
+    return s.substr(b, s.find_last_not_of(trimChars) - b + 1);
 }
 
 string

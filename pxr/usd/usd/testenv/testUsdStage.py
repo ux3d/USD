@@ -29,6 +29,13 @@ from pxr import Sdf,Usd,Tf
 allFormats = ['usd' + c for c in 'ac']
 
 class TestUsdStage(unittest.TestCase):
+    def test_URLEncodedIdentifiers(self):
+        with open("Libeccio%20LowFBX.usda", "w") as f:
+             f.write('#usda 1.0\ndef Xform "hello" {\n}\n')
+             f.close()
+        stage = Usd.Stage.Open("Libeccio%20LowFBX.usda")
+        assert stage
+
     def test_Repr(self):
         stage = Usd.Stage.CreateInMemory()
 
@@ -479,7 +486,11 @@ class TestUsdStage(unittest.TestCase):
                 rootLayer.subLayerPaths.append(subLayer.identifier)
                 rootLayer.subLayerPaths.append(anonLayer.identifier)
 
-                primPath = "/" + rootLayerName
+                # XXX: Strip non-ascii-identifier chars from `rootLayerName` --
+                # this should be removed once support for utf-8 identifiers is
+                # in.
+                primName = Tf.MakeValidIdentifier(rootLayerName)
+                primPath = Sdf.Path.absoluteRootPath.AppendChild(primName)
                 subLayerPrim = Sdf.CreatePrimInLayer(subLayer, primPath)
                 subLayerPrim.referenceList.Add(
                     Sdf.Reference(refLayer.identifier, primPath))

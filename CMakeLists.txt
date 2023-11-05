@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.14)
 
 if(APPLE)
 	set(MACOSX_DEPLOYMENT_TARGET "10.14")
@@ -12,16 +12,16 @@ if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
         message(FATAL_ERROR "Compiler does not support 64-bit builds. "
                 "If you are using Visual Studio, make sure you are in the "
                 "x64 command prompt and have specified the Win64 cmake "
-                "generator (e.g., -G \"Visual Studio 14 2015 Win64\")")
+                "generator (e.g., -G \"Visual Studio 15 2017 Win64\")")
     else()
         message(FATAL_ERROR "Compiler does not support 64-bit builds.")
     endif()
 endif()
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
-                      ${CMAKE_SOURCE_DIR}/cmake/defaults
-                      ${CMAKE_SOURCE_DIR}/cmake/modules
-                      ${CMAKE_SOURCE_DIR}/cmake/macros)
+list(APPEND CMAKE_MODULE_PATH
+    ${PROJECT_SOURCE_DIR}/cmake/defaults
+    ${PROJECT_SOURCE_DIR}/cmake/modules
+    ${PROJECT_SOURCE_DIR}/cmake/macros)
 
 include(Options)
 include(ProjectDefaults)
@@ -68,5 +68,12 @@ endif()
 if (PXR_BUILD_DOCUMENTATION)
     pxr_build_documentation()
 endif()   
+
+# If building python doc strings, run script
+# that uses doxygen build results and installed
+# USD python modules
+if (PXR_BUILD_PYTHON_DOCUMENTATION)
+    pxr_build_python_documentation()
+endif()
 
 pxr_toplevel_epilogue()

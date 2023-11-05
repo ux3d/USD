@@ -24,10 +24,11 @@
 #include "pxr/usd/usdPhysics/driveAPI.h"
 #include "pxr/usd/usd/schemaRegistry.h"
 #include "pxr/usd/usd/typed.h"
-#include "pxr/usd/usd/tokens.h"
 
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/sdf/assetPath.h"
+
+#include "pxr/base/tf/staticTokens.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -41,7 +42,6 @@ TF_REGISTRY_FUNCTION(TfType)
 
 TF_DEFINE_PRIVATE_TOKENS(
     _schemaTokens,
-    (PhysicsDriveAPI)
     (drive)
 );
 
@@ -70,6 +70,20 @@ UsdPhysicsDriveAPI
 UsdPhysicsDriveAPI::Get(const UsdPrim &prim, const TfToken &name)
 {
     return UsdPhysicsDriveAPI(prim, name);
+}
+
+/* static */
+std::vector<UsdPhysicsDriveAPI>
+UsdPhysicsDriveAPI::GetAll(const UsdPrim &prim)
+{
+    std::vector<UsdPhysicsDriveAPI> schemas;
+    
+    for (const auto &schemaName :
+         UsdAPISchemaBase::_GetMultipleApplyInstanceNames(prim, _GetStaticTfType())) {
+        schemas.emplace_back(prim, schemaName);
+    }
+
+    return schemas;
 }
 
 

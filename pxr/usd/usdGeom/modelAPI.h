@@ -95,10 +95,15 @@ class SdfAssetPath;
 /// \em model:applyDrawMode set at a lower level so each particle
 /// group draws individually.
 /// 
-/// Models of kind component are treated as if \em model:applyDrawMode
-/// were true.  This means a prim is drawn with proxy geometry when: the
-/// prim has kind component, and/or \em model:applyDrawMode is set; and
-/// the prim's resolved value for \em model:drawMode is not _default_.
+/// Models of kind component are automatically treated as if 
+/// \em model:applyDrawMode were true if \em model:applyDrawMode is not 
+/// authored on the component prim. A component prim will be drawn drawn with a 
+/// simplified representation when the prim has kind component, 
+/// \em model:applyDrawMode is not authored (or authored to be true), and the 
+/// resolved (i.e. inherited down namespace) value for \em model:drawMode is 
+/// not _default_. If you don't want component prims to use the resolved 
+/// non-default drawMode, you must apply the UsdGeomModelAPI schema on the prim 
+/// and explicitly set \em model:applyDrawMode to false.
 /// 
 /// \section UsdGeomModelAPI_cardGeometry Cards Geometry
 /// 
@@ -259,7 +264,8 @@ public:
     // --------------------------------------------------------------------- //
     /// Alternate imaging mode; applied to this prim or child prims
     /// where \em model:applyDrawMode is true, or where the prim
-    /// has kind \em component. See \ref UsdGeomModelAPI_drawMode
+    /// has kind \em component and \em model:applyDrawMode is not
+    /// authored. See \ref UsdGeomModelAPI_drawMode
     /// for mode descriptions.
     ///
     /// | ||
@@ -571,13 +577,36 @@ public:
     USDGEOM_API
     UsdAttribute GetExtentsHintAttr() const;
 
-    /// For the given model, compute the value for the extents hint with the
-    /// given \p bboxCache.  \p bboxCache should be setup with the
-    /// appropriate time.  After calling this function, the \p bboxCache may
-    /// have it's included purposes changed.
+    /// Compute a value suitable for passing to SetExtentsHint().
     ///
-    /// \note \p bboxCache should not be in use by any other thread while
-    /// this method is using it in a thread.
+    /// If this model is a UsdGeomBoundable, call
+    /// UsdGeomBoundable::ComputeExtentFromPlugins() with the \p bboxCache 's
+    /// time code.  If that function returns true, then populate the returned
+    /// array with the min and max repeated according to the number of tokens in
+    /// UsdGeomImageable::GetOrderedPurposeTokens().  Otherwise return an array
+    /// with a single empty range.
+    ///
+    /// If this model is not a UsdGeomBoundable, populate the return value by
+    /// calling UsdGeomBBoxCache::ComputeUntransformedBound() (and
+    /// GfBBox3d::ComputeAlignedBox() on that result) for each token in
+    /// UsdGeomImageable::GetOrderedPurposeTokens().
+    ///
+    /// In either case the, Nth successive pair of entries in the returned array
+    /// will be the min and max coordinates of the extent corresponding to the
+    /// Nth token in UsdGeomImageable::GetOrderedPurposeTokens(), except
+    /// trailing empty boxes are omitted, unless all boxes are empty in which
+    /// case the result is a single empty box.
+    ///
+    /// For example, if GetOrderedPurposeTokens() is [default, render, proxy,
+    /// guide] and this function returns [(0,0,0), (1,1,1), (+FLT_MAX),
+    /// (-FLT_MIN), (0,0,0), (1,1,1)] then this means that the computed extents
+    /// for 'default' and 'proxy' purpose are [(0,0,0), (1,1,1)] and the extents
+    /// for 'render' and 'guide' purposes are empty.
+    ///
+    /// This function modifies \p bboxCache's included purposes.
+    ///
+    /// \note \p bboxCache must not be used concurrently during the execution of
+    /// this function.
     USDGEOM_API
     VtVec3fArray ComputeExtentsHint(UsdGeomBBoxCache& bboxCache) const;
 

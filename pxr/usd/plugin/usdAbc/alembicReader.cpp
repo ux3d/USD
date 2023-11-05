@@ -90,7 +90,7 @@ TF_DEFINE_ENV_SETTING(
 
 #if ALEMBIC_LIBRARY_VERSION >= 10709
 TF_DEFINE_ENV_SETTING(
-    USD_ABC_READ_ARCHIVE_USE_MMAP, false,
+    USD_ABC_READ_ARCHIVE_USE_MMAP, true,
     "Use mmap when reading from an Ogawa archive.");
 #endif
 
@@ -915,6 +915,13 @@ _ReaderContext::Open(const std::string& filePath, std::string* errorLog,
     IFactory::CoreType abcType;
     factory.setPolicy(Abc::ErrorHandler::Policy::kQuietNoopPolicy);
     factory.setOgawaNumStreams(_GetNumOgawaStreams());
+
+#if ALEMBIC_LIBRARY_VERSION >= 10709
+    if (!TfGetEnvSetting(USD_ABC_READ_ARCHIVE_USE_MMAP)) {
+        factory.setOgawaReadStrategy(Alembic::AbcCoreFactory::IFactory::kFileStreams);
+    }
+#endif
+
     IArchive archive = factory.getArchive(layeredABC, abcType);
 
 #if PXR_HDF5_SUPPORT_ENABLED && !H5_HAVE_THREADSAFE
@@ -3682,10 +3689,10 @@ _ReadPrim(
     // Handle non-instances.
     _ReaderContext::Prim* instance = nullptr;
     if (!context.IsInstance(object)) {
-        // Combine geom with parent if parent is a transform.  There are
-        // several cases where we want to bail out and, rather than use a
-        // huge if statement or deep if nesting, we'll use do/while and
-        // break to do it.
+        // Combine geom with parent if parent is a transform with only a single
+        // child. There are several cases where we want to bail out and, rather
+        // than use a huge if statement or deep if nesting, we'll use do/while
+        // and break to do it.
         do {
             if (!TfGetEnvSetting(USD_ABC_XFORM_PRIM_COLLAPSE)) {
                 // Transform collapse is specified as unwanted behavior
@@ -3704,6 +3711,11 @@ _ReadPrim(
 
             // The parent must not be the root of an instance.
             if (context.IsInstance(parent)) {
+                break;
+            }
+
+            // The parent must not have more than this one object as a child.
+            if (parent.getNumChildren() > 1u) {
                 break;
             }
 

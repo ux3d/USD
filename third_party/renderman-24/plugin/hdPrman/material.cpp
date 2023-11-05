@@ -25,7 +25,6 @@
 #include "hdPrman/renderParam.h"
 #include "hdPrman/debugCodes.h"
 #include "hdPrman/matfiltConvertPreviewMaterial.h"
-#include "hdPrman/matfiltFilterChain.h"
 #include "hdPrman/matfiltResolveVstructs.h"
 #ifdef PXR_MATERIALX_SUPPORT_ENABLED
 #include "hdPrman/matfiltMaterialX.h"
@@ -47,10 +46,6 @@
 #include "pxr/usd/sdr/registry.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
-
-
-TF_DEFINE_ENV_SETTING(HD_PRMAN_USE_SCENE_INDEX_FOR_MATFILT, false,
-                      "Use scene indices rather than matfilt callbacks.");
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
@@ -76,37 +71,6 @@ TfTokenVector const&
 HdPrmanMaterial::GetShaderSourceTypes()
 {
     return *_sourceTypes;
-}
-
-TF_MAKE_STATIC_DATA(MatfiltFilterChain, _filterChain) {
-    *_filterChain = {
-        MatfiltConvertPreviewMaterial,
-        MatfiltResolveVstructs,
-#ifdef PXR_MATERIALX_SUPPORT_ENABLED
-        MatfiltMaterialX
-#endif
-    };
-}
-
-bool
-HdPrmanMaterial::GetUseSceneIndexForMatfilt()
-{
-    static const bool state =
-        TfGetEnvSetting(HD_PRMAN_USE_SCENE_INDEX_FOR_MATFILT);
-
-    return state && HdRenderIndex::IsSceneIndexEmulationEnabled();
-}
-
-MatfiltFilterChain
-HdPrmanMaterial::GetFilterChain()
-{
-    return *_filterChain;
-}
-
-void
-HdPrmanMaterial::SetFilterChain(MatfiltFilterChain const& chain)
-{
-    *_filterChain = chain;
 }
 
 HdMaterialNetwork2 const&
@@ -551,20 +515,27 @@ _ConvertNodes(
                         connEntry.first.data());
                 continue;
             }
-            if (!upstreamProp) {
+            TfToken propType = downstreamProp->GetType();
+            // In the case of terminals there is no upstream output name
+            // since the whole node is referenced as a whole
+            if (!upstreamProp && propType != SdrPropertyTypes->Terminal) {
                 TF_WARN("Unknown upstream property %s",
                         e.upstreamOutputName.data());
                 continue;
             }
             // Prman syntax for parameter references is "handle:param".
             RtUString name(downstreamProp->GetImplementationName().c_str());
-            RtUString inputRef(
-                               (e.upstreamNode.GetString()+":"
-                                + upstreamProp->GetImplementationName().c_str())
-                               .c_str());
+            RtUString inputRef;
+            if (!upstreamProp) {
+                inputRef = RtUString(e.upstreamNode.GetString().c_str());
+            } else {
+                inputRef = RtUString(
+                    (e.upstreamNode.GetString()+":"
+                    + upstreamProp->GetImplementationName().c_str())
+                    .c_str());
+            }
 
             // Establish the Riley connection.
-            TfToken propType = downstreamProp->GetType();
             if (propType == SdrPropertyTypes->Color) {
                 sn.params.SetColorReference(name, inputRef);
             } else if (propType == SdrPropertyTypes->Vector) {
@@ -581,6 +552,8 @@ _ConvertNodes(
                 sn.params.SetStringReference(name, inputRef);
             } else if (propType == SdrPropertyTypes->Struct) {
                 sn.params.SetStructReference(name, inputRef);
+            } else if (propType == SdrPropertyTypes->Terminal) {
+                sn.params.SetBxdfReference(name, inputRef);
             } else {
                 TF_WARN("Unknown type '%s' for property '%s' "
                         "on shader '%s' at %s; ignoring.",
@@ -755,20 +728,6 @@ HdPrmanMaterial::Sync(HdSceneDelegate *sceneDelegate,
             // Convert HdMaterial to HdMaterialNetwork2 form.
             _materialNetwork = HdConvertToHdMaterialNetwork2(
                     hdMatVal.UncheckedGet<HdMaterialNetworkMap>());
-            // Apply material filter chain to the network conditionally.
-            // NOTE: When use scene index plugins for matfilt transformations,
-            // the matfilt operations are triggered by the GetMaterialResource()
-            // call above.
-            if (!GetUseSceneIndexForMatfilt() && !_filterChain->empty()) {
-                std::vector<std::string> errors;
-                MatfiltExecFilterChain(*_filterChain, id, _materialNetwork, {},
-                                       *_sourceTypes, &errors);
-                if (!errors.empty()) {
-                    TF_RUNTIME_ERROR("HdPrmanMaterial: %s\n",
-                        TfStringJoin(errors).c_str());
-                    // Policy choice: Attempt to use the material, regardless.
-                }
-            }
             if (TfDebug::IsEnabled(HDPRMAN_MATERIALS)) {
                 HdPrman_DumpNetwork(_materialNetwork, id);
             }

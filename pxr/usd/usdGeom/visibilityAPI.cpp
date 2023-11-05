@@ -24,7 +24,6 @@
 #include "pxr/usd/usdGeom/visibilityAPI.h"
 #include "pxr/usd/usd/schemaRegistry.h"
 #include "pxr/usd/usd/typed.h"
-#include "pxr/usd/usd/tokens.h"
 
 #include "pxr/usd/sdf/types.h"
 #include "pxr/usd/sdf/assetPath.h"
@@ -38,11 +37,6 @@ TF_REGISTRY_FUNCTION(TfType)
         TfType::Bases< UsdAPISchemaBase > >();
     
 }
-
-TF_DEFINE_PRIVATE_TOKENS(
-    _schemaTokens,
-    (VisibilityAPI)
-);
 
 /* virtual */
 UsdGeomVisibilityAPI::~UsdGeomVisibilityAPI()
@@ -201,3 +195,29 @@ PXR_NAMESPACE_CLOSE_SCOPE
 // 'PXR_NAMESPACE_OPEN_SCOPE', 'PXR_NAMESPACE_CLOSE_SCOPE'.
 // ===================================================================== //
 // --(BEGIN CUSTOM CODE)--
+
+PXR_NAMESPACE_OPEN_SCOPE
+
+UsdAttribute
+UsdGeomVisibilityAPI::GetPurposeVisibilityAttr(
+    const TfToken &purpose) const
+{
+    if (purpose == UsdGeomTokens->guide) {
+        return GetGuideVisibilityAttr();
+    }
+    if (purpose == UsdGeomTokens->proxy) {
+        return GetProxyVisibilityAttr();
+    }
+    if (purpose == UsdGeomTokens->render) {
+        return GetRenderVisibilityAttr();
+    }
+
+    TF_CODING_ERROR(
+        "Unexpected purpose '%s' getting purpose visibility attribute for "
+        "<%s>.",
+        purpose.GetText(),
+        GetPrim().GetPath().GetText());
+    return {};
+}
+
+PXR_NAMESPACE_CLOSE_SCOPE

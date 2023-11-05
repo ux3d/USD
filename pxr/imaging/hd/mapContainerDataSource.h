@@ -40,6 +40,14 @@ public:
     using ValueFunction =
         std::function<HdDataSourceBaseHandle(const HdDataSourceBaseHandle &)>;
 
+    HD_API
+    ~HdMapContainerDataSource() override;
+
+    HD_API
+    TfTokenVector GetNames() override;
+    HD_API
+    HdDataSourceBaseHandle Get(const TfToken &name) override;
+private:
     /// (Lazily) Create new container data source by applying given
     /// function to all data sources.
     HD_API
@@ -47,16 +55,6 @@ public:
         const ValueFunction &f,
         const HdContainerDataSourceHandle &src);
 
-    HD_API
-    ~HdMapContainerDataSource() override;
-
-    HD_API
-    bool Has(const TfToken &name) override;
-    HD_API
-    TfTokenVector GetNames() override;
-    HD_API
-    HdDataSourceBaseHandle Get(const TfToken &name) override;
-private:
     ValueFunction _f;
     
     HdContainerDataSourceHandle _src;

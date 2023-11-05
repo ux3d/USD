@@ -21,7 +21,6 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include "pxr/imaging/garch/glApi.h"
 
 #include "pxr/base/gf/bbox3d.h"
 #include "pxr/base/gf/frustum.h"
@@ -31,9 +30,6 @@
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/tf/getenv.h"
 
-#include "pxr/imaging/glf/contextCaps.h"
-#include "pxr/imaging/glf/drawTarget.h"
-#include "pxr/imaging/glf/glContext.h"
 #include "pxr/imaging/garch/glDebugWindow.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdGeom/bboxCache.h"
@@ -111,6 +107,13 @@ public:
         }
     }
 
+    void PrimsRenamed(
+            const HdSceneIndexBase &sender,
+            const RenamedPrimEntries &entries) override
+    {
+        ConvertPrimsRenamedToRemovedAndAdded(sender, entries, this);
+    }
+
     EventVector GetEvents()
     {
         return _events;
@@ -142,19 +145,6 @@ int main(int argc, char *argv[])
     // prepare GL context
     GarchGLDebugWindow window("UsdImagingGL Test", 512, 512);
     window.Init();
-    GarchGLApiLoad();
-
-    // wrap into GlfGLContext so that GlfDrawTarget works
-    GlfGLContextSharedPtr ctx = GlfGLContext::GetCurrentGLContext();
-    GlfContextCaps::InitInstance();
-
-    // prep draw target
-    int width = 512, height = 512;
-    GlfDrawTargetRefPtr drawTarget = GlfDrawTarget::New(GfVec2i(width, height));
-    drawTarget->Bind();
-    drawTarget->AddAttachment("color", GL_RGBA, GL_FLOAT, GL_RGBA);
-    drawTarget->Unbind();
-
 
     // open stage
     UsdStageRefPtr stage = UsdStage::Open(stageFilePath);
@@ -174,14 +164,10 @@ int main(int argc, char *argv[])
         new UsdImagingGLEngine(stage->GetPseudoRoot().GetPath(), 
                 excludedPaths));
 
-#define _Render() \
-    drawTarget->Bind(); \
-    engine->Render(stage->GetPseudoRoot(), params); \
-    drawTarget->Unbind(); \
-
+    engine->SetRendererAov(HdAovTokens->color);
 
     //-------------------------------------------------------------------------
-    _Render();
+    engine->Render(stage->GetPseudoRoot(), params);
 
     // NOTE: this makes assumptions based on scene index emulation and will
     //       need to be updated when UsdImagingGLEngine no longer uses the
@@ -210,13 +196,17 @@ int main(int argc, char *argv[])
 
     sceneIndex->AddObserver(HdSceneIndexObserverPtr(&observer));
 
+    // we are testing to confirm that an existing input prim is allowed to
+    // pass through
+    const size_t inputChildCount = 1;
 
     SdfPath cubePerMeshProcPrimPath("/World/cubePerMeshProc");
 
     std::cout << "Checking initial child count of: "
         << cubePerMeshProcPrimPath << std::endl;
     TF_AXIOM(
-        sceneIndex->GetChildPrimPaths(cubePerMeshProcPrimPath).size() == 4);
+        sceneIndex->GetChildPrimPaths(cubePerMeshProcPrimPath).size() ==
+            (4 + inputChildCount));
     std::cout << "...OK" << std::endl;
 
 
@@ -237,11 +227,12 @@ int main(int argc, char *argv[])
         srcMeshRel.SetTargets({SdfPath("/World/myMesh")});
     }
 
-    _Render();
+    engine->Render(stage->GetPseudoRoot(), params);
 
     std::cout << "Checking adjusted child count of: "
         << cubePerMeshProcPrimPath << "..." << std::endl;
-    TF_AXIOM(sceneIndex->GetChildPrimPaths(cubePerMeshProcPrimPath).size() == 8);
+    TF_AXIOM(sceneIndex->GetChildPrimPaths(cubePerMeshProcPrimPath).size() ==
+            (8 + inputChildCount));
     std::cout << "...OK" << std::endl;
 
     //-------------------------------------------------------------------------
@@ -267,7 +258,7 @@ int main(int argc, char *argv[])
     {
         observer.Clear();
         params.frame = 2;
-        _Render();
+        engine->Render(stage->GetPseudoRoot(), params);
 
         std::cout << "changing frame to 2" << std::endl;
 
@@ -287,12 +278,13 @@ int main(int argc, char *argv[])
             srcMeshRel.SetTargets({SdfPath("/World/myMesh2")});
         }
 
-        _Render();
+        engine->Render(stage->GetPseudoRoot(), params);
 
         std::cout << "Checking restored child count of: "
             << cubePerMeshProcPrimPath << "..." << std::endl;
         TF_AXIOM(
-            sceneIndex->GetChildPrimPaths(cubePerMeshProcPrimPath).size() == 4);
+            sceneIndex->GetChildPrimPaths(cubePerMeshProcPrimPath).size() == 
+                (4 + inputChildCount));
         std::cout << "...OK" << std::endl;
     }
 
@@ -302,7 +294,7 @@ int main(int argc, char *argv[])
     {
         observer.Clear();
         params.frame = 1;
-        _Render();
+        engine->Render(stage->GetPseudoRoot(), params);
 
         std::cout << "changing frame to 1" << std::endl;\
         std::cout << "confirming no child prims with dirtied xforms..."
@@ -320,7 +312,7 @@ int main(int argc, char *argv[])
         observer.Clear();
         cubePerMeshProcPrim.GetAttribute(
             TfToken("primvars:scale")).Set(VtValue(1.25f));
-        _Render();
+        engine->Render(stage->GetPseudoRoot(), params);
 
         std::cout << "setting 'primvars:scale' of "
             << cubePerMeshProcPrimPath << std::endl;
@@ -360,7 +352,7 @@ int main(int argc, char *argv[])
         UsdPrim procPrim = stage->GetPrimAtPath(makeSomeStuffProcPrimPath);
         procPrim.GetAttribute(TfToken("primvars:myDepth")).Set(VtValue(2));
 
-        _Render();
+        engine->Render(stage->GetPseudoRoot(), params);
 
         std::cout << "confirming child and grandchild types "
             << makeSomeStuffProcPrimPath << "..." << std::endl;

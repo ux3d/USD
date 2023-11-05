@@ -49,6 +49,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 class HdPrmanFramebuffer;
 class HdPrmanCamera;
 class HdPrmanRenderDelegate;
+class HdPrman_RenderSettings;
 class SdfAssetPath;
 
 // Compile-time limit on max time samples.
@@ -64,7 +65,8 @@ class HdPrman_RenderParam : public HdRenderParam
 public:
     HDPRMAN_API
     HdPrman_RenderParam(const std::string &rileyVariant, 
-        const std::string &xpuDevices);
+        const std::string &xpuDevices,
+        const std::vector<std::string>& extraArgs);
 
     HDPRMAN_API
     ~HdPrman_RenderParam() override;
@@ -75,7 +77,8 @@ public:
     // Convert any Hydra primvars that should be Riley instance attributes.
     HDPRMAN_API
     RtParamList
-    ConvertAttributes(HdSceneDelegate *sceneDelegate, SdfPath const& id);
+    ConvertAttributes(HdSceneDelegate *sceneDelegate,
+        SdfPath const& id, bool isGeometry);
 
     // A vector of Riley coordinate system id's.
     using RileyCoordSysIdVec = std::vector<riley::CoordinateSystemId>;
@@ -143,6 +146,12 @@ public:
                         std::string const& integratorName,
                         RtParamList& params);
 
+    HDPRMAN_API
+    void SetBatchCommandLineArgs(
+                        HdPrmanRenderDelegate *renderDelegate,
+                        VtValue const &cmdLine,
+                        RtParamList * options);
+
     // Callback to convert any camera settings that should become
     // parameters on the integrator.
     using IntegratorCameraCallback = void (*)
@@ -207,8 +216,10 @@ public:
         return _renderViewContext;
     }
 
-    void CreateRenderViewFromSpec(
-        const VtDictionary &renderSpec);
+    void CreateRenderViewFromRenderSpec(const VtDictionary &renderSpec);
+
+    void CreateRenderViewFromRenderSettingsPrim(
+        HdPrman_RenderSettings const &renderSettingsPrim);
 
     // Starts the render thread (if needed), and tells the render thread to
     // call into riley and start a render.
@@ -251,6 +262,10 @@ public:
         return _framebuffer.get();
     }
 
+    // Creates displays in riley based on rendersettings map
+    void CreateRenderViewFromProducts(
+        const VtArray<HdRenderSettingsMap>& renderProducts, int frame);
+
     // Scene version counter.
     std::atomic<int> sceneVersion;
 
@@ -291,10 +306,26 @@ public:
     void CreateSampleFilterNetwork(HdSceneDelegate *sceneDelegate);
     riley::SampleFilterList GetSampleFilterList();
 
+    // Path to the connected Display Filter from the Render Settings Prim
+    void SetConnectedDisplayFilterPaths(HdSceneDelegate *sceneDelegate,
+        SdfPathVector const& connectedDisplayFilterPaths);
+    SdfPathVector GetConnectedDisplayFilterPaths() {
+        return _connectedDisplayFilterPaths;
+    }
+
+    // Riley Data from the Display Filter Prim
+    void AddDisplayFilter(
+        HdSceneDelegate *sceneDelegate, 
+        SdfPath const& path, 
+        riley::ShadingNode const& node);
+    void CreateDisplayFilterNetwork(HdSceneDelegate *sceneDelegate);
+    riley::DisplayFilterList GetDisplayFilterList();
+
 private:
     void _CreateStatsSession();
     void _CreateRiley(const std::string &rileyVariant, 
-        const std::string &xpuVariant);
+        const std::string &xpuVariant,
+        const std::vector<std::string>& extraArgs);
     void _CreateFallbackMaterials();
     void _CreateFallbackLight();
     void _CreateIntegrator(HdRenderDelegate * renderDelegate);
@@ -338,6 +369,12 @@ private:
     void _CreateQuickIntegrator(HdRenderDelegate * renderDelegate);
 
     void _RenderThreadCallback();
+
+    void _CreateRileyDisplay(
+        const RtUString& productName, const RtUString& productType,
+        HdPrman_RenderViewDesc& renderViewDesc,
+        const std::vector<size_t>& renderOutputIndices,
+        RtParamList& displayParams, bool isXpu);
 
     std::unique_ptr<class HdRenderThread> _renderThread;
     std::unique_ptr<HdPrmanFramebuffer> _framebuffer;
@@ -396,11 +433,18 @@ private:
     std::map<SdfPath, riley::ShadingNode> _sampleFilterNodes;
     riley::SampleFilterId _sampleFiltersId;
 
+    // DisplayFilter
+    SdfPathVector _connectedDisplayFilterPaths;
+    std::map<SdfPath, riley::ShadingNode> _displayFilterNodes;
+    riley::DisplayFilterId _displayFiltersId;
+
     // RIX or XPU
     bool _xpu;
     std::vector<int> _xpuGpuConfig;
 
     int _lastSettingsVersion;
+
+    std::vector<std::string> _outputNames;
 };
 
 // Helper to convert matrix types, handling double->float conversion.

@@ -53,9 +53,7 @@
 #include "pxr/base/tf/envSetting.h"
 #include "pxr/base/tf/registryManager.h"
 
-#include <tbb/atomic.h>
 #include <tbb/concurrent_queue.h>
-#include <tbb/concurrent_vector.h>
 #include <tbb/spin_rw_mutex.h>
 
 #include <algorithm>
@@ -115,7 +113,8 @@ PcpCache::PcpCache(
     _layerStackIdentifier(layerStackIdentifier),
     _usd(usd),
     _fileFormatTarget(fileFormatTarget),
-    _layerStackCache(Pcp_LayerStackRegistry::New(_fileFormatTarget, _usd)),
+    _layerStackCache(Pcp_LayerStackRegistry::New(
+        _layerStackIdentifier, _fileFormatTarget, _usd)),
     _primDependencies(new Pcp_Dependencies())
 {
     // Do nothing
@@ -169,6 +168,12 @@ PcpLayerStackPtr
 PcpCache::GetLayerStack() const
 {
     return _layerStack;
+}
+
+bool
+PcpCache::HasRootLayerStack(PcpLayerStackPtr const &layerStack) const
+{
+    return get_pointer(layerStack) == get_pointer(_layerStack);
 }
 
 PcpLayerStackPtr
@@ -345,7 +350,7 @@ PcpCache::RequestLayerMuting(const std::vector<std::string>& layersToMute,
                     typedError->resolvedAssetPath) != finalLayersToUnmute.end();
                 if (assetWasUnmuted) {
                     cacheChanges->DidMaybeFixAsset(
-                        this, typedError->site, typedError->layer, 
+                        this, typedError->site, typedError->sourceLayer, 
                         typedError->resolvedAssetPath);
                 }
             }
@@ -928,9 +933,17 @@ PcpCache::IsInvalidAssetPath(const std::string& resolvedAssetPath) const
 }
 
 bool 
-PcpCache::HasAnyDynamicFileFormatArgumentDependencies() const
+PcpCache::HasAnyDynamicFileFormatArgumentFieldDependencies() const
 {
-    return _primDependencies->HasAnyDynamicFileFormatArgumentDependencies();
+    return 
+        _primDependencies->HasAnyDynamicFileFormatArgumentFieldDependencies();
+}
+
+bool 
+PcpCache::HasAnyDynamicFileFormatArgumentAttributeDependencies() const
+{
+    return 
+        _primDependencies->HasAnyDynamicFileFormatArgumentAttributeDependencies();
 }
 
 bool 
@@ -940,12 +953,37 @@ PcpCache::IsPossibleDynamicFileFormatArgumentField(
     return _primDependencies->IsPossibleDynamicFileFormatArgumentField(field);
 }
 
+bool 
+PcpCache::IsPossibleDynamicFileFormatArgumentAttribute(
+    const TfToken &attributeName) const
+{
+    return _primDependencies->IsPossibleDynamicFileFormatArgumentAttribute(
+        attributeName);
+}
+
 const PcpDynamicFileFormatDependencyData &
 PcpCache::GetDynamicFileFormatArgumentDependencyData(
     const SdfPath &primIndexPath) const
 {
     return _primDependencies->GetDynamicFileFormatArgumentDependencyData(
         primIndexPath);
+}
+
+const SdfPathVector&
+PcpCache::GetPrimsUsingExpressionVariablesFromLayerStack(
+    const PcpLayerStackPtr &layerStack) const
+{
+    return _primDependencies->GetPrimsUsingExpressionVariablesFromLayerStack(
+        layerStack);
+}
+
+const std::unordered_set<std::string>& 
+PcpCache::GetExpressionVariablesFromLayerStackUsedByPrim(
+    const SdfPath &primIndexPath,
+    const PcpLayerStackPtr &layerStack) const
+{
+    return _primDependencies->GetExpressionVariablesFromLayerStackUsedByPrim(
+        primIndexPath, layerStack);
 }
 
 void
@@ -1125,7 +1163,7 @@ PcpCache::Reload(PcpChanges* changes)
                     std::dynamic_pointer_cast<PcpErrorInvalidAssetPath>(e)) {
                     changes->DidMaybeFixAsset(this,
                                               typedErr->site,
-                                              typedErr->layer,
+                                              typedErr->sourceLayer,
                                               typedErr->resolvedAssetPath);
                 }
             }
@@ -1164,7 +1202,7 @@ PcpCache::ReloadReferences(PcpChanges* changes, const SdfPath& primPath)
                     std::dynamic_pointer_cast<PcpErrorInvalidAssetPath>(e))
                 {
                     changes->DidMaybeFixAsset(this, typedErr->site,
-                                              typedErr->layer,
+                                              typedErr->sourceLayer,
                                               typedErr->resolvedAssetPath);
                 }
             }
@@ -1191,7 +1229,7 @@ PcpCache::ReloadReferences(PcpChanges* changes, const SdfPath& primPath)
     // local layers.
     SdfLayerHandleSet layersToReload;
     for (const PcpLayerStackPtr& layerStack: layerStacksAtOrUnderPrim) {
-        for (const SdfLayerHandle& layer: layerStack->GetLayers()) {
+        for (const auto& layer: layerStack->GetLayers()) {
             if (!_layerStack->HasLayer(layer)) {
                 layersToReload.insert(layer);
             }
@@ -1307,8 +1345,9 @@ struct PcpCache::_ParallelIndexer
                               const PcpLayerStackPtr &layerStack)
         : _cache(cache)
         , _layerStack(layerStack)
-        , _resolver(ArGetResolver())
-        {}
+        , _resolver(ArGetResolver()) {
+        _isPublishing = false;
+    }
 
     void Prepare(_UntypedIndexingChildrenPredicate childrenPred,
                  PcpPrimIndexInputs baseInputs,
@@ -1336,10 +1375,11 @@ struct PcpCache::_ParallelIndexer
                     populationContext(*_cache->_primDependencies);
                 TF_FOR_ALL(i, _toCompute) {
                     _dispatcher.Run(&This::_ComputeIndex, this,
-                                    i->first, i->second,
-                                    /*checkCache=*/true);
+                                    i->first, i->second, /*checkCache=*/true);
                 }
                 _dispatcher.Wait();
+                // Publish any remaining outputs.
+                _PublishOutputs();
             });
 
         // Clear out results & working space.  If stuff is huge, dump it
@@ -1400,8 +1440,19 @@ struct PcpCache::_ParallelIndexer
 
         if (!index) {
             // We didn't find an index in the cache, so we must compute one.
+            
+            // The indexing function produces these outputs (which includes the
+            // resulting prim index).  However, we require a stable memory
+            // address where the final prim index will reside so we can spawn
+            // child tasks that reliably refer to the index as its parent.  So
+            // below, after we've done the indexing, we'll move the index to a
+            // path table node that we will eventually store in the PcpCache's
+            // _primIndexCache.  This means that the following code cannot use
+            // outputs.primIndex reliably after this move has occurred.  Instead
+            // the following code should use the 'index' local variable.
             PcpPrimIndexOutputs outputs;
-
+            _PrimIndexCache::NodeHandle outputIndexNode;
+            
             // Establish inputs.
             PcpPrimIndexInputs inputs = _baseInputs;
             inputs.parentIndex = parentIndex;
@@ -1434,23 +1485,47 @@ struct PcpCache::_ParallelIndexer
                     _cache->_includedPayloads.erase(path);
                 }
             }
-            
-            // Publish to cache.
-            {
-                tbb::spin_rw_mutex::scoped_lock lock(_primIndexCacheMutex);
-                PcpPrimIndex *mutableIndex = &_cache->_primIndexCache[path];
-                index = mutableIndex;
-                TF_VERIFY(!index->IsValid(),
-                          "PrimIndex for %s already exists in cache",
-                          index->GetPath().GetText());
-                mutableIndex->Swap(outputs.primIndex);
-                lock.release();
-                _cache->_primDependencies->Add(
-                    *index, 
-                    std::move(outputs.culledDependencies),
-                    std::move(outputs.dynamicFileFormatDependency));
+
+            // The following code uses the computed index, but we store it in a
+            // path table node handle that we'll put the cache later.  This way
+            // the memory address stays stable for child indexing tasks, etc.
+            // Note that this means the following code CANNOT use
+            // 'outputs.index', as it is moved-from.  It must use 'index'
+            // instead.
+            outputIndexNode = _PrimIndexCache::NodeHandle::New(
+                path, std::move(outputs.primIndex));
+            index = &outputIndexNode.GetMapped();
+        
+            // Arrange to publish to cache.
+
+            // If we are still checking the cache but we had to compute an
+            // index, it means the one in the cache for this path was invalid.
+            // In that case, we need to replace the invalid one in the cache,
+            // and fetch a new index pointer synchronously.
+            if (checkCache) {
+                index = _PublishOneOutput(
+                    {std::move(outputIndexNode), std::move(outputs)},
+                    /*allowInvalid=*/true);
             }
-        }
+            // Otherwise arrange to publish, but only do so if another thread
+            // isn't already working on it.
+            else {
+                // Add this to the publishing queue.
+                _toPublish.push(
+                    {std::move(outputIndexNode), std::move(outputs)});
+                // If another thread is already publishing, just let it handle
+                // the job.  Otherwise try to take the publishing state from
+                // false -> true, and if we do so, we'll do the publishing.
+                bool isPublishing =
+                    _isPublishing.load(std::memory_order_relaxed);
+                if (!isPublishing &&
+                    _isPublishing.compare_exchange_strong(isPublishing, true)) {
+                    // We took _isPublishing to true, so publish.
+                    _PublishOutputs();
+                    _isPublishing = false;
+                }
+            }
+        }   
 
         // Invoke the client's predicate to see if we should do children.
         TfTokenVector namesToCompose;
@@ -1466,13 +1541,49 @@ struct PcpCache::_ParallelIndexer
                     continue;
                 }
 
-                _dispatcher.Run(
-                    &This::_ComputeIndex, this, index,
-                    path.AppendChild(name), checkCache);
+                _dispatcher.Run([this, index, path, name, checkCache]() {
+                    _ComputeIndex(index, path.AppendChild(name), checkCache);
+                });
             }
         }
+        
     }
 
+    PcpPrimIndex const *
+    _PublishOneOutput(std::pair<_PrimIndexCache::NodeHandle,
+                      PcpPrimIndexOutputs> &&outputItem,
+                      bool allowInvalid) {
+        tbb::spin_rw_mutex::scoped_lock lock(_primIndexCacheMutex);
+        auto iresult = _cache->_primIndexCache.insert(
+            std::move(outputItem.first));
+        if (!iresult.second) {
+            TF_VERIFY(allowInvalid && !iresult.first->second.IsValid(),
+                      "PrimIndex <%s> already exists in cache",
+                      iresult.first->first.GetAsString().c_str());
+            // Replace the invalid index.
+            iresult.first->second =
+                std::move(outputItem.first.GetMutableMapped());
+        }
+        PcpPrimIndex *mutableIndex = &iresult.first->second;
+        lock.release();
+        _cache->_primDependencies->Add(
+            *mutableIndex, 
+            std::move(outputItem.second.culledDependencies),
+            std::move(outputItem.second.dynamicFileFormatDependency),
+            std::move(outputItem.second.expressionVariablesDependency));
+        return mutableIndex;
+    }
+                     
+
+    void _PublishOutputs() {
+        TRACE_FUNCTION();
+        // Publish.
+        std::pair<_PrimIndexCache::NodeHandle, PcpPrimIndexOutputs> outputItem;
+        while (_toPublish.try_pop(outputItem)) {
+            _PublishOneOutput(std::move(outputItem), /*allowInvalid=*/false);
+        }
+    }
+    
     // Fixed inputs.
     PcpCache * const _cache;
     const PcpLayerStackPtr _layerStack;
@@ -1492,6 +1603,10 @@ struct PcpCache::_ParallelIndexer
     char const *_mallocTag1;
     char const *_mallocTag2;
     vector<pair<const PcpPrimIndex *, SdfPath> > _toCompute;
+    tbb::concurrent_queue<
+        std::pair<_PrimIndexCache::NodeHandle, PcpPrimIndexOutputs>
+        > _toPublish;
+    std::atomic<bool> _isPublishing;
 };
 
 void
@@ -1592,7 +1707,8 @@ PcpCache::_ComputePrimIndexWithCompatibleInputs(
     _primDependencies->Add(
         outputs.primIndex, 
         std::move(outputs.culledDependencies),
-        std::move(outputs.dynamicFileFormatDependency));
+        std::move(outputs.dynamicFileFormatDependency),
+        std::move(outputs.expressionVariablesDependency));
 
     // Update _includedPayloads if we included a discovered payload.
     if (outputs.payloadState == PcpPrimIndexOutputs::IncludedByPredicate) {

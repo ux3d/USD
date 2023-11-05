@@ -30,8 +30,8 @@ from .common import (RenderModes, ColorCorrectionModes, PickModes,
                      SelectionHighlightModes, CameraMaskModes, 
                      PrintWarning)
 
-from . import settings2
-from .settings2 import StateSource
+from . import settings
+from .settings import StateSource
 from pxr.UsdUtils.constantsGroup import ConstantsGroup
 from .freeCamera import FreeCamera
 from .common import ClearColors, HighlightColors
@@ -104,7 +104,7 @@ class OCIOSettings():
     def colorSpace(self):
         return self._colorSpace
 
-class ViewSettingsDataModel(QtCore.QObject, StateSource):
+class ViewSettingsDataModel(StateSource, QtCore.QObject):
     """Data model containing settings related to the rendered view of a USD
     file.
     """
@@ -171,6 +171,7 @@ class ViewSettingsDataModel(QtCore.QObject, StateSource):
         self._highlightColorName = self.stateProperty("highlightColor", default="Yellow")
         self._ambientLightOnly = self.stateProperty("cameraLightEnabled", default=True)
         self._domeLightEnabled = self.stateProperty("domeLightEnabled", default=False)
+        self._domeLightTexturesVisible = self.stateProperty("domeLightTexturesVisible", default=True)
         self._clearColorText = self.stateProperty("backgroundColor", default="Grey (Dark)")
         self._autoComputeClippingPlanes = self.stateProperty("autoComputeClippingPlanes", default=False)
         self._showBBoxPlayback = self.stateProperty("showBBoxesDuringPlayback", default=False)
@@ -195,6 +196,7 @@ class ViewSettingsDataModel(QtCore.QObject, StateSource):
 
         self._showUndefinedPrims = self.stateProperty("showUndefinedPrims", default=False)
         self._showAbstractPrims = self.stateProperty("showAbstractPrims", default=False)
+        self._showPrimDisplayNames = self.stateProperty("showPrimDisplayNames", default=True)
         self._rolloverPrimInfo = self.stateProperty("rolloverPrimInfo", default=False)
         self._displayCameraOracles = self.stateProperty("cameraOracles", default=False)
         self._cameraMaskMode = self.stateProperty("cameraMaskMode", default=CameraMaskModes.NONE)
@@ -241,6 +243,7 @@ class ViewSettingsDataModel(QtCore.QObject, StateSource):
         state["highlightColor"] = self._highlightColorName
         state["cameraLightEnabled"] = self._ambientLightOnly
         state["domeLightEnabled"] = self._domeLightEnabled
+        state["domeLightTexturesVisible"] = self._domeLightTexturesVisible
         state["backgroundColor"] = self._clearColorText
         state["autoComputeClippingPlanes"] = self._autoComputeClippingPlanes
         state["showBBoxesDuringPlayback"] = self._showBBoxPlayback
@@ -259,6 +262,7 @@ class ViewSettingsDataModel(QtCore.QObject, StateSource):
         state["showAllMasterPrims"] = self._showAllPrototypePrims
         state["showUndefinedPrims"] = self._showUndefinedPrims
         state["showAbstractPrims"] = self._showAbstractPrims
+        state["showPrimDisplayNames"] = self._showPrimDisplayNames
         state["rolloverPrimInfo"] = self._rolloverPrimInfo
         state["cameraOracles"] = self._displayCameraOracles
         state["cameraMaskMode"] = self._cameraMaskMode
@@ -401,9 +405,21 @@ class ViewSettingsDataModel(QtCore.QObject, StateSource):
         else:
             self._freeCameraAspect = value
 
-    @freeCameraViewSetting
     def _frustumChanged(self):
+        """
+        Needed when updating any camera setting (including movements). Will not
+        update the property viewer.
+        """
+        self.signalFreeCameraSettingChanged.emit()
+
+    def _frustumSettingsChanged(self):
+        """
+        Needed when updating specific camera settings (e.g., aperture). See
+        _updateFreeCameraData for the full list of dependent settings. Will
+        update the property viewer.
+        """
         self._updateFreeCameraData()
+        self.signalSettingChanged.emit()
 
     def _updateFreeCameraData(self):
         '''Updates member variables with the current free camera view settings.
@@ -624,6 +640,15 @@ class ViewSettingsDataModel(QtCore.QObject, StateSource):
         self._showAbstractPrims = value
 
     @property
+    def showPrimDisplayNames(self):
+        return self._showPrimDisplayNames
+
+    @showPrimDisplayNames.setter
+    @invisibleViewSetting
+    def showPrimDisplayNames(self, value):
+        self._showPrimDisplayNames = value
+
+    @property
     def rolloverPrimInfo(self):
         return self._rolloverPrimInfo
 
@@ -740,6 +765,15 @@ class ViewSettingsDataModel(QtCore.QObject, StateSource):
         self._domeLightEnabled = value
 
     @property
+    def domeLightTexturesVisible(self):
+        return self._domeLightTexturesVisible
+
+    @domeLightTexturesVisible.setter
+    @visibleViewSetting
+    def domeLightTexturesVisible(self, value):
+        self._domeLightTexturesVisible = value
+
+    @property
     def clearColorText(self):
         return self._clearColorText
 
@@ -806,9 +840,14 @@ class ViewSettingsDataModel(QtCore.QObject, StateSource):
         if self._freeCamera:
             self._freeCamera.signalFrustumChanged.disconnect(
                 self._frustumChanged)
+            self._freeCamera.signalFrustumSettingsChanged.disconnect(
+                self._frustumSettingsChanged)
         self._freeCamera = value
         if self._freeCamera:
-            self._freeCamera.signalFrustumChanged.connect(self._frustumChanged)
+            self._freeCamera.signalFrustumChanged.connect(
+                self._frustumChanged)
+            self._freeCamera.signalFrustumSettingsChanged.connect(
+                self._frustumSettingsChanged)
             self._updateFreeCameraData()
 
     @property

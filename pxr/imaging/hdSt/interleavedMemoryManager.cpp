@@ -44,6 +44,8 @@
 
 #include "pxr/imaging/hf/perfLog.h"
 
+#include <boost/functional/hash.hpp>
+
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -133,7 +135,7 @@ HdStInterleavedUBOMemoryManager::CreateBufferArray(
             HdPerfTokens->garbageCollectedUbo);
 }
 
-HdAggregationStrategy::AggregationId
+HdStAggregationStrategy::AggregationId
 HdStInterleavedUBOMemoryManager::ComputeAggregationId(
     HdBufferSpecVector const &bufferSpecs,
     HdBufferArrayUsageHint usageHint) const
@@ -174,7 +176,7 @@ HdStInterleavedSSBOMemoryManager::CreateBufferArray(
             HdPerfTokens->garbageCollectedSsbo);
 }
 
-HdAggregationStrategy::AggregationId
+HdStAggregationStrategy::AggregationId
 HdStInterleavedSSBOMemoryManager::ComputeAggregationId(
     HdBufferSpecVector const &bufferSpecs,
     HdBufferArrayUsageHint usageHint) const
@@ -193,18 +195,18 @@ HdStInterleavedSSBOMemoryManager::ComputeAggregationId(
 //  _StripedInterleavedBuffer
 // ---------------------------------------------------------------------------
 
-static inline int
-_ComputePadding(int alignment, int currentOffset)
+static inline size_t
+_ComputePadding(int alignment, size_t currentOffset)
 {
     return ((alignment - (currentOffset & (alignment - 1))) & (alignment - 1));
 }
 
-static inline int
+static inline size_t
 _ComputeAlignment(HdTupleType tupleType)
 {
     const HdType componentType = HdGetComponentType(tupleType.type);
-    const int numComponents = HdGetComponentCount(tupleType.type);
-    const int componentSize = HdDataSizeOfType(componentType);
+    const size_t numComponents = HdGetComponentCount(tupleType.type);
+    const size_t componentSize = HdDataSizeOfType(componentType);
 
     // This is simplified to treat arrays of int and floats
     // as vectors. The padding rules state that if we have
@@ -218,7 +220,7 @@ _ComputeAlignment(HdTupleType tupleType)
 
     // Matrices are treated as an array of vec4s, so the
     // max num components we are looking at is 4
-    int alignComponents = std::min(numComponents, 4); 
+    size_t alignComponents = std::min(numComponents, size_t(4)); 
 
     // single elements and vec2's are allowed, but
     // vec3's get rounded up to vec4's
@@ -278,12 +280,12 @@ HdStInterleavedMemoryManager::_StripedInterleavedBuffer::_StripedInterleavedBuff
 
     TF_FOR_ALL(it, bufferSpecs) {
         // Figure out the alignment we need for this type of data
-        int alignment = _ComputeAlignment(it->tupleType);
+        const size_t alignment = _ComputeAlignment(it->tupleType);
         _stride += _ComputePadding(alignment, _stride);
 
         // We need to save the max alignment size for later because the
         // stride for our struct needs to be aligned to this
-        structAlignment = std::max(structAlignment, alignment);
+        structAlignment = std::max(size_t(structAlignment), alignment);
 
         _stride += HdDataSizeOfTupleType(it->tupleType);
         
@@ -303,26 +305,37 @@ HdStInterleavedMemoryManager::_StripedInterleavedBuffer::_StripedInterleavedBuff
         _stride += _ComputePadding(_bufferOffsetAlignment, _stride);
     }
 
-    TF_VERIFY(_stride > 0);
+    if (_stride > _maxSize) {
+        TF_WARN("Computed stride = %zu of interleaved buffer is larger than max"
+        " size %zu, cannot create buffer.", _stride, _maxSize);
+        _SetMaxNumRanges(0);
+        return;
+    }
+    if (_stride == 0) {
+        TF_WARN("Computed stride = %zu of interleaved buffer is 0, cannot "
+        " create buffer.", _stride);
+        _SetMaxNumRanges(0);
+        return;
+    }
 
     TF_DEBUG_MSG(HD_BUFFER_ARRAY_INFO,
-                 "Create interleaved buffer array: stride = %d\n", _stride);
+                 "Create interleaved buffer array: stride = %zu\n", _stride);
 
     // populate BufferResources, interleaved
-    int offset = 0;
+    size_t offset = 0;
     TF_FOR_ALL(it, bufferSpecs) {
         // Figure out alignment for this data member
-        int alignment = _ComputeAlignment(it->tupleType);
+        const size_t alignment = _ComputeAlignment(it->tupleType);
         // Add any needed padding to fixup alignment
         offset += _ComputePadding(alignment, offset);
 
         _AddResource(it->name, it->tupleType, offset, _stride);
 
         TF_DEBUG_MSG(HD_BUFFER_ARRAY_INFO,
-                     "  %s : offset = %d, alignment = %d\n",
+                     "  %s : offset = %zu, alignment = %zu\n",
                      it->name.GetText(), offset, alignment);
 
-        const int thisSize = HdDataSizeOfTupleType(it->tupleType);
+        const size_t thisSize = HdDataSizeOfTupleType(it->tupleType);
         offset += thisSize;
         if (useCppShaderPadding) {
             offset += _ComputePadding(alignment, thisSize);
@@ -722,7 +735,9 @@ HdStInterleavedMemoryManager::_StripedInterleavedBufferRange::CopyData(
 
     int vboStride = VBO->GetStride();
     size_t vboOffset = VBO->GetOffset() + vboStride * _index;
-    int dataSize = HdDataSizeOfTupleType(VBO->GetTupleType());
+    size_t const vboDataSize = HdDataSizeOfTupleType(VBO->GetTupleType());
+    size_t const sourceDataSize =
+        HdDataSizeOfTupleType(bufferSource->GetTupleType());
     size_t const elementStride = _stripedBuffer->GetElementStride();
 
     const unsigned char *data =
@@ -731,7 +746,14 @@ HdStInterleavedMemoryManager::_StripedInterleavedBufferRange::CopyData(
     HgiBufferCpuToGpuOp blitOp;
     blitOp.gpuDestinationBuffer = VBO->GetHandle();
     blitOp.sourceByteOffset = 0;
-    blitOp.byteSize = dataSize;
+    if (sourceDataSize <= vboDataSize) {
+        blitOp.byteSize = sourceDataSize;
+    } else {
+        TF_WARN("Source data size (%zu bytes) is larger than buffer resource "
+                "(%zu bytes). Clamping copy op to the latter.\n",
+                sourceDataSize, vboDataSize);
+        blitOp.byteSize = vboDataSize;
+    }
     
     HdStStagingBuffer *stagingBuffer =
         GetResourceRegistry()->GetStagingBuffer();
@@ -743,7 +765,7 @@ HdStInterleavedMemoryManager::_StripedInterleavedBufferRange::CopyData(
         stagingBuffer->StageCopy(blitOp);
         
         vboOffset += elementStride;
-        data += dataSize;
+        data += vboDataSize;
     }
 
     HD_PERF_COUNTER_ADD(HdStPerfTokens->copyBufferCpuToGpu,

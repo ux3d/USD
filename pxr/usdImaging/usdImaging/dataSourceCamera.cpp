@@ -138,19 +138,6 @@ UsdImagingDataSourceCamera::UsdImagingDataSourceCamera(
 {
 }
 
-bool
-UsdImagingDataSourceCamera::Has(const TfToken &name)
-{
-    static TfTokenVector usdNames = 
-        UsdGeomCamera::GetSchemaAttributeNames(/* includeInherited = */ false);
-    for (const TfToken &usdName : usdNames) {
-        if (name == usdName) {
-            return true;
-        }
-    }
-    return false;
-}
-
 TfTokenVector
 UsdImagingDataSourceCamera::GetNames()
 {
@@ -210,29 +197,18 @@ UsdImagingDataSourceCameraPrim::UsdImagingDataSourceCameraPrim(
 {
 }
 
-bool 
-UsdImagingDataSourceCameraPrim::UsdImagingDataSourceCameraPrim::Has(
-    const TfToken & name)
-{
-    if (name == HdCameraSchemaTokens->camera) {
-        return true;
-    }
-
-    return UsdImagingDataSourcePrim::Has(name);
-}
-
 TfTokenVector 
 UsdImagingDataSourceCameraPrim::GetNames()
 {
     TfTokenVector result = UsdImagingDataSourcePrim::GetNames();
-    result.push_back(HdCameraSchemaTokens->camera);
+    result.push_back(HdCameraSchema::GetSchemaToken());
     return result;
 }
 
 HdDataSourceBaseHandle 
 UsdImagingDataSourceCameraPrim::Get(const TfToken & name)
 {
-    if (name == HdCameraSchemaTokens->camera) {
+    if (name == HdCameraSchema::GetSchemaToken()) {
         return UsdImagingDataSourceCamera::New(
                 _GetSceneIndexPath(),
                 UsdGeomCamera(_GetUsdPrim()),
@@ -244,12 +220,16 @@ UsdImagingDataSourceCameraPrim::Get(const TfToken & name)
 
 HdDataSourceLocatorSet
 UsdImagingDataSourceCameraPrim::Invalidate(
-    const TfToken &subprim, const TfTokenVector &properties)
+    UsdPrim const& prim,
+    const TfToken &subprim,
+    const TfTokenVector &properties,
+    const UsdImagingPropertyInvalidationType invalidationType)
 {
     TRACE_FUNCTION();
 
     HdDataSourceLocatorSet locators =
-        UsdImagingDataSourcePrim::Invalidate(subprim, properties);
+        UsdImagingDataSourcePrim::Invalidate(
+            prim, subprim, properties, invalidationType);
 
     static TfTokenVector usdNames = 
         UsdGeomCamera::GetSchemaAttributeNames(/* includeInherited = */ false);

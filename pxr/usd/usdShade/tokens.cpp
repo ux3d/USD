@@ -28,7 +28,8 @@ PXR_NAMESPACE_OPEN_SCOPE
 UsdShadeTokensType::UsdShadeTokensType() :
     allPurpose("", TfToken::Immortal),
     bindMaterialAs("bindMaterialAs", TfToken::Immortal),
-    coordSys("coordSys:", TfToken::Immortal),
+    coordSys("coordSys", TfToken::Immortal),
+    coordSys_MultipleApplyTemplate_Binding("coordSys:__INSTANCE_NAME__:binding", TfToken::Immortal),
     displacement("displacement", TfToken::Immortal),
     fallbackStrength("fallbackStrength", TfToken::Immortal),
     full("full", TfToken::Immortal),
@@ -56,10 +57,18 @@ UsdShadeTokensType::UsdShadeTokensType() :
     universalSourceType("", TfToken::Immortal),
     volume("volume", TfToken::Immortal),
     weakerThanDescendants("weakerThanDescendants", TfToken::Immortal),
+    ConnectableAPI("ConnectableAPI", TfToken::Immortal),
+    CoordSysAPI("CoordSysAPI", TfToken::Immortal),
+    Material("Material", TfToken::Immortal),
+    MaterialBindingAPI("MaterialBindingAPI", TfToken::Immortal),
+    NodeDefAPI("NodeDefAPI", TfToken::Immortal),
+    NodeGraph("NodeGraph", TfToken::Immortal),
+    Shader("Shader", TfToken::Immortal),
     allTokens({
         allPurpose,
         bindMaterialAs,
         coordSys,
+        coordSys_MultipleApplyTemplate_Binding,
         displacement,
         fallbackStrength,
         full,
@@ -86,7 +95,14 @@ UsdShadeTokensType::UsdShadeTokensType() :
         universalRenderContext,
         universalSourceType,
         volume,
-        weakerThanDescendants
+        weakerThanDescendants,
+        ConnectableAPI,
+        CoordSysAPI,
+        Material,
+        MaterialBindingAPI,
+        NodeDefAPI,
+        NodeGraph,
+        Shader
     })
 {
 }

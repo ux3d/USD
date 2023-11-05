@@ -32,6 +32,9 @@
 #include "pxr/usdImaging/usdVolImaging/tokens.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/matrix4d.h"
+#include "pxr/base/js/json.h"
+#include "pxr/base/js/types.h"
+#include "pxr/base/js/value.h"
 #include "pxr/base/tf/fileUtils.h"
 
 #ifdef PXR_OPENVDB_SUPPORT_ENABLED
@@ -160,15 +163,15 @@ _DetermineOpenVDBFieldType(HdSceneDelegate *sceneDelegate,
             vectorDataRoleHint = roleHint.UncheckedGet<TfToken>();
         }
 
-        if (vectorDataRoleHint == UsdVolTokens->color) {
+        if (vectorDataRoleHint == UsdVolTokens->Color) {
             return HdPrman_Volume::FieldType::ColorType;
-        } else if (vectorDataRoleHint == UsdVolTokens->point) {
+        } else if (vectorDataRoleHint == UsdVolTokens->Point) {
             return HdPrman_Volume::FieldType::PointType;
-        } else if (vectorDataRoleHint == UsdVolTokens->normal) {
+        } else if (vectorDataRoleHint == UsdVolTokens->Normal) {
             return HdPrman_Volume::FieldType::NormalType;
-        } else if (vectorDataRoleHint == UsdVolTokens->vector) {
+        } else if (vectorDataRoleHint == UsdVolTokens->Vector) {
             return HdPrman_Volume::FieldType::VectorType;
-        } else if (vectorDataRoleHint == UsdVolTokens->none_) {
+        } else if (vectorDataRoleHint == UsdVolTokens->None_) {
             // Fall through
         } else if (!vectorDataRoleHint.IsEmpty()) {
             TF_WARN("Unknown vectorDataRoleHint value '%s' on volume field prim"
@@ -241,6 +244,8 @@ _EmitOpenVDBVolume(HdSceneDelegate *sceneDelegate,
 
     // This will be the first of the string args supplied to the blobbydso. 
     std::string vdbSource;
+    // JSON args.
+    JsObject jsonData;
 
 #ifndef PXR_OPENVDB_SUPPORT_ENABLED
     vdbSource = volumeAssetPath;
@@ -298,6 +303,27 @@ _EmitOpenVDBVolume(HdSceneDelegate *sceneDelegate,
 
         // Copy key into the vdbSource string, prepended with a "key:" tag.
         vdbSource = "key:" + key;
+
+        // Build up JSON args for grid groups. For now we assume all grids in
+        // the VDB provided should be included.
+        std::map<std::string, JsArray> indexMap;
+        for (const auto grid : *grids) {
+            if (auto meta = grid->getMetadata<openvdb::TypedMetadata<int>>("index")) {
+                indexMap[grid->getName()].emplace_back(meta->value());
+            }
+        }
+
+        if (!indexMap.empty()) {
+            JsArray gridGroups;
+            for (const auto& entry : indexMap) {
+                gridGroups.emplace_back(JsObject {
+                    { "name", JsValue(entry.first) },
+                    { "indices", entry.second },
+                });
+            }
+
+            jsonData["gridGroups"] = std::move(gridGroups);
+        }
     }
 #endif
 
@@ -305,13 +331,17 @@ _EmitOpenVDBVolume(HdSceneDelegate *sceneDelegate,
                                                     HdFieldTokens->fieldName);
     const TfToken &fieldName = fieldNameVal.Get<TfToken>();
 
+    const std::string jsonOpts = JsWriteToString(JsValue(std::move(jsonData)));
+
     primvars->SetString(RixStr.k_Ri_type, blobbydsoImplOpenVDB);
 
-    RtUString sa[2] = {
+    const std::array<RtUString, 4> sa = {
         RtUString(vdbSource.c_str()),
-        RtUString(fieldName.GetText())
+        RtUString(fieldName.GetText()),
+        RtUString(""),
+        RtUString(jsonOpts.c_str())
     };
-    primvars->SetStringArray(RixStr.k_blobbydso_stringargs, sa, 2);
+    primvars->SetStringArray(RixStr.k_blobbydso_stringargs, sa.data(), sa.size());
 
     // The individual fields of this volume need to be declared as primvars
     for (HdVolumeFieldDescriptor const& field : fields) {

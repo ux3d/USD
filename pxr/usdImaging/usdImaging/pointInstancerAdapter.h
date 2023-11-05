@@ -59,6 +59,31 @@ public:
     virtual bool IsInstancerAdapter() const override;
 
     // ---------------------------------------------------------------------- //
+    /// \name Scene Index Support
+    // ---------------------------------------------------------------------- //
+
+    USDIMAGING_API
+    TfTokenVector GetImagingSubprims(UsdPrim const& prim) override;
+
+    USDIMAGING_API
+    TfToken GetImagingSubprimType(
+            UsdPrim const& prim,
+            TfToken const& subprim) override;
+
+    USDIMAGING_API
+    HdContainerDataSourceHandle GetImagingSubprimData(
+            UsdPrim const& prim,
+            TfToken const& subprim,
+            const UsdImagingDataSourceStageGlobals &stageGlobals) override;
+
+    USDIMAGING_API
+    HdDataSourceLocatorSet InvalidateImagingSubprim(
+        UsdPrim const& prim,
+        TfToken const& subprim,
+        TfTokenVector const& properties,
+        UsdImagingPropertyInvalidationType invalidationType) override;
+
+    // ---------------------------------------------------------------------- //
     /// \name Parallel Setup and Resolve
     // ---------------------------------------------------------------------- //
     
@@ -118,6 +143,16 @@ public:
     virtual void MarkVisibilityDirty(UsdPrim const& prim,
                                      SdfPath const& cachePath,
                                      UsdImagingIndexProxy* index) override;
+
+    virtual void MarkLightParamsDirty(
+        const UsdPrim& prim,
+        const SdfPath& cachePath,
+        UsdImagingIndexProxy* index) override;
+
+    virtual void MarkCollectionsDirty(
+        const UsdPrim& prim,
+        const SdfPath& cachePath,
+        UsdImagingIndexProxy* index) override;
 
     // ---------------------------------------------------------------------- //
     /// \name Instancing
@@ -196,6 +231,17 @@ public:
     SdfPath GetMaterialId(UsdPrim const& prim, 
                           SdfPath const& cachePath, 
                           UsdTimeCode time) const override;
+
+    VtValue GetLightParamValue(
+        const UsdPrim& prim,
+        const SdfPath& cachePath,
+        const TfToken& paramName,
+        UsdTimeCode time) const override;
+    
+    VtValue GetMaterialResource(
+        const UsdPrim& prim,
+        const SdfPath& cachePath,
+        UsdTimeCode time) const override;
 
     HdExtComputationInputDescriptorVector
     GetExtComputationInputs(UsdPrim const& prim,

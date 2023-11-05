@@ -216,7 +216,7 @@ HdxVisualizeAovTask::_CreateShaderResources(
 
         HgiShaderFunctionAddTexture(
             &fragDesc, _GetTextureIdentifierForShader().GetString(),
-            /*dimensions*/2, inputAovTextureDesc.format);
+            /*bindIndex = */0, /*dimensions = */2, inputAovTextureDesc.format);
 
         HgiShaderFunctionAddStageOutput(
             &fragDesc, "hd_FragColor", "vec4", "color");
@@ -298,6 +298,7 @@ HdxVisualizeAovTask::_CreateResourceBindings(
     HgiTextureBindDesc texBind0;
     texBind0.bindingIndex = 0;
     texBind0.stageUsage = HgiShaderStageFragment;
+    texBind0.writable = false;
     texBind0.textures.push_back(inputAovTexture);
     texBind0.samplers.push_back(_sampler);
     resourceDesc.textures.push_back(std::move(texBind0));
@@ -324,7 +325,6 @@ HdxVisualizeAovTask::_CreatePipeline(HgiTextureDesc const& outputTextureDesc)
     if (_pipeline) {
         return true;
     }
-    _GetHgi()->DestroyGraphicsPipeline(&_pipeline);
 
     HgiGraphicsPipelineDesc desc;
     desc.debugName = "AOV Visualiztion Pipeline";

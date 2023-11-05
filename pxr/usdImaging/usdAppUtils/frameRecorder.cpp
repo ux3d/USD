@@ -22,45 +22,78 @@
 // language governing permissions and limitations under the Apache License.
 //
 
-// Must be included before GL headers.
-#include "pxr/imaging/garch/glApi.h"
-
-#include "pxr/pxr.h"
 #include "pxr/usdImaging/usdAppUtils/frameRecorder.h"
 
 #include "pxr/base/gf/camera.h"
+#include "pxr/base/tf/scoped.h"
 
 #include "pxr/imaging/glf/simpleLight.h"
 #include "pxr/imaging/glf/simpleMaterial.h"
+#include "pxr/imaging/hd/renderBuffer.h"
+#include "pxr/imaging/hdSt/hioConversions.h"
+#include "pxr/imaging/hdSt/textureUtils.h"
+#include "pxr/imaging/hdx/tokens.h"
+#include "pxr/imaging/hdx/types.h"
 #include "pxr/imaging/hio/image.h"
+
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdGeom/bboxCache.h"
 #include "pxr/usd/usdGeom/metrics.h"
 #include "pxr/usd/usdGeom/tokens.h"
+#include "pxr/usd/usdRender/settings.h"
+#include "pxr/usd/usdRender/product.h"
 
-#include "pxr/imaging/hdx/types.h"
-#include "pxr/imaging/hgi/hgi.h"
-#include "pxr/imaging/hdSt/textureUtils.h"
+#include "pxr/base/arch/fileSystem.h"
 
 #include <string>
 
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-
-UsdAppUtilsFrameRecorder::UsdAppUtilsFrameRecorder() :
+UsdAppUtilsFrameRecorder::UsdAppUtilsFrameRecorder(
+    const TfToken& rendererPluginId,
+    bool gpuEnabled, 
+    const SdfPath& renderSettingsPrimPath) :
+    _imagingEngine(HdDriver(), rendererPluginId, gpuEnabled),
     _imageWidth(960u),
     _complexity(1.0f),
-    _colorCorrectionMode("disabled"),
-    _purposes({UsdGeomTokens->default_, UsdGeomTokens->proxy})
+    _colorCorrectionMode(HdxColorCorrectionTokens->disabled),
+    _purposes({UsdGeomTokens->default_, UsdGeomTokens->proxy}),
+    _renderSettingsPrimPath(renderSettingsPrimPath)
 {
-    GarchGLApiLoad();
+    // Disable presentation to avoid the need to create an OpenGL context when
+    // using other graphics APIs such as Metal and Vulkan.
+    _imagingEngine.SetEnablePresentation(false);
+
+    // Set the interactive to be false on the HdRenderSettingsMap 
+    _imagingEngine.SetRendererSetting(
+        HdRenderSettingsTokens->enableInteractive, VtValue(false));
+
+    // Set the Active RenderSettings Prim path when not empty.
+    if (!renderSettingsPrimPath.IsEmpty()) {
+        _imagingEngine.SetActiveRenderSettingsPrimPath(renderSettingsPrimPath);
+    }
 }
 
 static bool
 _HasPurpose(const TfTokenVector& purposes, const TfToken& purpose)
 {
     return std::find(purposes.begin(), purposes.end(), purpose) != purposes.end();
+}
+
+void
+UsdAppUtilsFrameRecorder::SetColorCorrectionMode(
+    const TfToken& colorCorrectionMode)
+{
+    if (_imagingEngine.GetGPUEnabled()) {
+        _colorCorrectionMode = colorCorrectionMode;
+    } else {
+        if (colorCorrectionMode != HdxColorCorrectionTokens->disabled) {
+            TF_WARN("Color correction presently unsupported when the GPU is "
+                    "disabled.");
+        }
+        _colorCorrectionMode = HdxColorCorrectionTokens->disabled;
+    }
 }
 
 void
@@ -71,8 +104,8 @@ UsdAppUtilsFrameRecorder::SetIncludedPurposes(const TfTokenVector& purposes)
                                    UsdGeomTokens->guide };
     _purposes = { UsdGeomTokens->default_ };
 
-    for ( TfToken const &p : purposes) {
-        if (_HasPurpose(allPurposes, p)){
+    for (TfToken const &p : purposes) {
+        if (_HasPurpose(allPurposes, p)) {
             _purposes.push_back(p);
         }
         else if (p != UsdGeomTokens->default_) {
@@ -126,55 +159,185 @@ _ComputeCameraToFrameStage(const UsdStagePtr& stage, UsdTimeCode timeCode,
     return gfCamera;
 }
 
-static bool
-_WriteTextureToFile(HgiTextureDesc const& textureDesc,
-                    uint8_t * buffer,
-                    size_t bufferSize,
-                    std::string const& filename,
-                    const bool flipped)
+namespace
 {
-    const size_t formatByteSize = HgiGetDataSizeOfFormat(textureDesc.format);
-    const size_t width = textureDesc.dimensions[0];
-    const size_t height = textureDesc.dimensions[1];
-    const size_t dataByteSize = width * height * formatByteSize;
-    
-    if (bufferSize < dataByteSize) {
-        return false;
-    }
-    
-    if (textureDesc.format < 0 || textureDesc.format >= HgiFormatCount) {
-        return false;
-    }
-    
-    HioImage::StorageSpec storage;
-    storage.width = width;
-    storage.height = height;
-    storage.format = HdxGetHioFormat(textureDesc.format);
-    storage.flipped = flipped;
-    storage.data = buffer;
 
+class TextureBufferWriter
+{
+public:
+    TextureBufferWriter(
+        UsdImagingGLEngine* engine)
+        : _engine(engine)
+        , _colorRenderBuffer(nullptr)
     {
-        TRACE_FUNCTION_SCOPE("writing image");
-        VtDictionary metadata;
-        
-        HioImageSharedPtr const image = HioImage::OpenForWriting(filename);
-        const bool writeSuccess = image && image->Write(storage, metadata);
-        
-        if (!writeSuccess) {
-            TF_RUNTIME_ERROR("Failed to write image to %s", filename.c_str());
-            return false;
+        // If rendering via Storm or a non-Storm renderer but with the GPU
+        // enabled, we will have a color texture to read from.
+        //
+        // If using a non-Storm renderer with the GPU disabled, we need to
+        // read from the color render buffer.
+
+        if (_engine->GetGPUEnabled()) {
+            _colorTextureHandle = engine->GetAovTexture(HdAovTokens->color);
+            if (!_colorTextureHandle) {
+                TF_CODING_ERROR("No color texture to write out.");
+            }
+        } else {
+            _colorRenderBuffer = engine->GetAovRenderBuffer(HdAovTokens->color);
+            if (_colorRenderBuffer) {
+                _colorRenderBuffer->Resolve();
+            } else {
+                TF_CODING_ERROR("No color buffer to write out.");
+            }
         }
     }
 
-    return true;
+    bool Write(const std::string& filename)
+    {
+        if (!_ValidSource()) {
+            return false;
+        }
+
+        HioImage::StorageSpec storage;
+        storage.width = _GetWidth();
+        storage.height = _GetHeight();
+        storage.format = _GetFormat();
+        storage.flipped = true;
+        storage.data = _Map();
+        TfScoped<> scopedUnmap([this](){ _Unmap(); });
+
+        {
+            TRACE_FUNCTION_SCOPE("writing image");
+
+            const HioImageSharedPtr image = HioImage::OpenForWriting(filename);
+            const bool writeSuccess = image && image->Write(storage);
+            
+            if (!writeSuccess) {
+                TF_RUNTIME_ERROR("Failed to write image to %s",
+                    filename.c_str());
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+private:
+    bool _ValidSource() const
+    {
+        return _colorTextureHandle || _colorRenderBuffer;
+    }
+
+    unsigned int _GetWidth() const
+    {
+        if (_colorTextureHandle) {
+            return _colorTextureHandle->GetDescriptor().dimensions[0];
+        } else if (_colorRenderBuffer) {
+            return _colorRenderBuffer->GetWidth();
+        } else {
+            return 0;
+        }
+    }
+
+    unsigned int _GetHeight() const
+    {
+        if (_colorTextureHandle) {
+            return _colorTextureHandle->GetDescriptor().dimensions[1];
+        } else if (_colorRenderBuffer) {
+            return _colorRenderBuffer->GetHeight();
+        } else {
+            return 0;
+        }
+    }
+
+    HioFormat _GetFormat() const
+    {
+        if (_colorTextureHandle) {
+            return HdxGetHioFormat(_colorTextureHandle->GetDescriptor().format);
+        } else if (_colorRenderBuffer) {
+            return HdStHioConversions::GetHioFormat(
+                _colorRenderBuffer->GetFormat());
+        } else {
+            return HioFormatInvalid;
+        }
+    }
+
+    void* _Map()
+    {
+        if (_colorTextureHandle) {
+            size_t size = 0;
+            _mappedColorTextureBuffer = HdStTextureUtils::HgiTextureReadback(
+                _engine->GetHgi(), _colorTextureHandle, &size);
+            return _mappedColorTextureBuffer.get();
+        } else if (_colorRenderBuffer) {
+            return _colorRenderBuffer->Map();
+        } else {
+            return nullptr;
+        }
+    }
+
+    void _Unmap()
+    {
+        if (_colorRenderBuffer) {
+            _colorRenderBuffer->Unmap();
+        }
+    }
+
+    UsdImagingGLEngine* _engine;
+    HgiTextureHandle _colorTextureHandle;
+    HdRenderBuffer* _colorRenderBuffer;
+    HdStTextureUtils::AlignedBuffer<uint8_t> _mappedColorTextureBuffer;
+};
+
+}
+
+static bool
+_RenderProductsGenerated(
+    const UsdStagePtr& stage,
+    const SdfPath& renderSettingsPrimPath)
+{
+    if (renderSettingsPrimPath.IsEmpty()) {
+        return false;
+    }
+
+    bool productsGenerated = false;
+    UsdRenderSettings settings = 
+        UsdRenderSettings(stage->GetPrimAtPath(renderSettingsPrimPath));
+    
+    // Each Render Product should generate an image
+    SdfPathVector renderProductTargets;
+    settings.GetProductsRel().GetForwardedTargets(&renderProductTargets);
+
+    for (const auto productPath : renderProductTargets) {
+        UsdRenderProduct product =
+            UsdRenderProduct(stage->GetPrimAtPath(productPath));
+        TfToken productName;
+        product.GetProductNameAttr().Get(&productName);
+        if (ArchOpenFile(productName.GetText(), "r")) {
+            TF_STATUS("Product '%s' generated from RenderProduct prim <%s> "
+                      "on RenderSettings <%s>", productName.GetText(), 
+                      productPath.GetText(), renderSettingsPrimPath.GetText());
+            productsGenerated |= true;
+        } else {
+            TF_WARN("Missing generated Product '%s' from RenderProduct prim "
+                    "<%s> on RenderSettings <%s>", productName.GetText(),
+                    productPath.GetText(), renderSettingsPrimPath.GetText());
+        }
+    }
+
+    if (renderProductTargets.empty()) {
+        TF_WARN("No Render Prouducts found on the RenderSettings prim <%s>\n",
+                renderSettingsPrimPath.GetText());
+    }
+
+    return productsGenerated;
 }
 
 bool
 UsdAppUtilsFrameRecorder::Record(
-        const UsdStagePtr& stage,
-        const UsdGeomCamera& usdCamera,
-        const UsdTimeCode timeCode,
-        const std::string& outputImagePath)
+    const UsdStagePtr& stage,
+    const UsdGeomCamera& usdCamera,
+    const UsdTimeCode timeCode,
+    const std::string& outputImagePath)
 {
     if (!stage) {
         TF_CODING_ERROR("Invalid stage");
@@ -208,7 +371,6 @@ UsdAppUtilsFrameRecorder::Record(
     const size_t imageHeight = std::max<size_t>(
         static_cast<size_t>(static_cast<float>(_imageWidth) / aspectRatio),
         1u);
-    const GfVec2i renderResolution(_imageWidth, imageHeight);
 
     const GfFrustum frustum = gfCamera.GetFrustum();
     const GfVec3d cameraPos = frustum.GetPosition();
@@ -249,34 +411,30 @@ UsdAppUtilsFrameRecorder::Record(
     renderParams.showRender = _HasPurpose(_purposes, UsdGeomTokens->render);
     renderParams.showGuides = _HasPurpose(_purposes, UsdGeomTokens->guide);
 
-    glEnable(GL_DEPTH_TEST);
-    glViewport(0, 0, _imageWidth, imageHeight);
-
-    const GLfloat CLEAR_DEPTH[1] = { 1.0f };
     const UsdPrim& pseudoRoot = stage->GetPseudoRoot();
 
-    do {
-        glClearBufferfv(GL_COLOR, 0, CLEAR_COLOR.data());
-        glClearBufferfv(GL_DEPTH, 0, CLEAR_DEPTH);
+    unsigned int sleepTime = 10; // Initial wait time of 10 ms
+
+    while (true) {
         _imagingEngine.Render(pseudoRoot, renderParams);
-    } while (!_imagingEngine.IsConverged());
 
-    HgiTextureHandle handle = _imagingEngine.GetAovTexture(HdAovTokens->color);
-    if (!handle) {
-        TF_CODING_ERROR("No color presentation texture");
-        return false;
+        if (_imagingEngine.IsConverged()) {
+            break;
+        } else {
+            // Allow render thread to progress before invoking Render again.
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleepTime));
+            // Increase the sleep time up to a max of 100 ms
+            sleepTime = std::min(100u, sleepTime + 5);
+        }
+    };
+
+    // If the RenderProducts on RenderSettings Prim successfully generated
+    // images, we do not need to write to the outputImagePath.
+    if (_RenderProductsGenerated(stage, _renderSettingsPrimPath)) {
+        return true;
     }
-    
-    size_t bufferSize = 0;
-    HdStTextureUtils::AlignedBuffer<uint8_t> buffer =
-        HdStTextureUtils::HgiTextureReadback(
-            _imagingEngine.GetHgi(), handle, &bufferSize);
-
-    return _WriteTextureToFile(handle.Get()->GetDescriptor(),
-                               buffer.get(),
-                               bufferSize,
-                               outputImagePath,
-                               true);
+    TextureBufferWriter writer(&_imagingEngine);
+    return writer.Write(outputImagePath);
 }
 
 

@@ -190,6 +190,17 @@ UsdUsdFileFormat::InitData(const FileFormatArguments& args) const
     return fileFormat->InitData(args);
 }
 
+SdfAbstractDataRefPtr
+UsdUsdFileFormat::_InitDetachedData(const FileFormatArguments& args) const
+{
+    SdfFileFormatConstPtr fileFormat = _GetFileFormatForArguments(args);
+    if (!fileFormat) {
+        fileFormat = _GetDefaultFileFormat();
+    }
+    
+    return fileFormat->InitDetachedData(args);
+}
+
 bool
 UsdUsdFileFormat::CanRead(const string& filePath) const
 {
@@ -207,6 +218,29 @@ UsdUsdFileFormat::Read(
 {
     TRACE_FUNCTION();
 
+    return _ReadHelper</* Detached = */ false>(
+        layer, resolvedPath, metadataOnly);
+}
+
+bool
+UsdUsdFileFormat::_ReadDetached(
+    SdfLayer* layer,
+    const std::string& resolvedPath,
+    bool metadataOnly) const
+{
+    TRACE_FUNCTION();
+
+    return _ReadHelper</* Detached = */ true>(
+        layer, resolvedPath, metadataOnly);
+}
+
+template <bool Detached>
+bool 
+UsdUsdFileFormat::_ReadHelper(
+    SdfLayer* layer,
+    const string& resolvedPath,
+    bool metadataOnly) const
+{
     // Fetch the asset from Ar.
     auto asset = ArGetResolver().OpenAsset(ArResolvedPath(resolvedPath));
     if (!asset) {
@@ -223,7 +257,7 @@ UsdUsdFileFormat::Read(
     {
         TfErrorMark m;
         if (usdcFileFormat->_ReadFromAsset(
-                layer, resolvedPath, asset, metadataOnly)) {
+                layer, resolvedPath, asset, metadataOnly, Detached)) {
             return true;
         }
         m.Clear();
@@ -240,7 +274,7 @@ UsdUsdFileFormat::Read(
     // gives us better diagnostic messages.
     if (usdcFileFormat->_CanReadFromAsset(resolvedPath, asset)) {
         return usdcFileFormat->_ReadFromAsset(
-            layer, resolvedPath, asset, metadataOnly);
+            layer, resolvedPath, asset, metadataOnly, Detached);
     }
 
     if (usdaFileFormat->_CanReadFromAsset(resolvedPath, asset)) {
@@ -284,7 +318,7 @@ UsdUsdFileFormat::WriteToFile(
 
     // Otherwise, if we are saving a .usd layer (i.e., calling SdfLayer::Save),
     // we want to maintain that layer's underlying format. For example,
-    // calling Save() on an ASCII .usd file should produce an ASCII file
+    // calling Save() on a text .usd file should produce a text file
     // and not convert it to binary.
     // 
     // If we are exporting to a .usd layer (i.e., calling SdfLayer::Export),
@@ -340,7 +374,7 @@ UsdUsdFileFormat::WriteToStream(
     size_t indent) const
 {
     return _GetUnderlyingFileFormatForLayer(
-        *boost::get_pointer(spec->GetLayer()))->WriteToStream(
+        *get_pointer(spec->GetLayer()))->WriteToStream(
             spec, out, indent);
 }
 

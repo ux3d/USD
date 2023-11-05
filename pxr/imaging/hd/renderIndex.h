@@ -130,10 +130,15 @@ public:
     //    hgi = Hgi::CreatePlatformDefaultHgi()
     //    hgiDriver = new HdDriver<Hgi*>(HgiTokens→renderDriver, hgi)
     //    HdRenderIndex::New(_renderDelegate, {_hgiDriver})
+    // 
+    /// "instanceName" is an optional identifier useful for applications to
+    /// associate this render index with related resources (such as the scene
+    /// index instances).
     HD_API
     static HdRenderIndex* New(
         HdRenderDelegate *renderDelegate,
-        HdDriverVector const& drivers);
+        HdDriverVector const& drivers,
+        const std::string &instanceName=std::string());
 
     HD_API
     ~HdRenderIndex();
@@ -359,11 +364,17 @@ public:
     HD_API
     void InsertSceneIndex(
             const HdSceneIndexBaseRefPtr &inputScene,
-            SdfPath const& scenePathPrefix);
+            SdfPath const& scenePathPrefix,
+            bool needsPrefixing = true);
 
     HD_API
     void RemoveSceneIndex(
             const HdSceneIndexBaseRefPtr &inputScene);
+
+    /// The terminal scene index that is driving what is in the render index
+    /// through emulation.
+    HD_API
+    HdSceneIndexBaseRefPtr GetTerminalSceneIndex() const;
 
     // ---------------------------------------------------------------------- //
     /// \name Render Delegate
@@ -395,36 +406,36 @@ public:
     /// invalidations to be consolidated into vectorized batches. Calling this
     /// will cause subsequent notices to be be queued.
     /// 
-    /// NOTE: This does not currently track any nested state. Repeated calls
-    ///       prior to a corresponding SceneIndexEmulationNoticeBatchEnd will
-    ///       have no effect.
+    /// NOTE: This tracks depth internally and is safe to call in nested 
+    ///       contexts. It is not safe to call from multiple threads, though.
     HD_API
     void SceneIndexEmulationNoticeBatchBegin();
 
     /// Flushes any queued scene index observer notices and disables further
     /// queueing.
     ///
-    /// NOTE: This does not currently track any nested state. Calling this
-    ///       will immediately flush and disable queueing regardless of the
-    ///       number of times SceneIndexEmulationNoticeBatchBegin is called
-    ///       prior.
+    /// NOTE: This tracks depth internally and is safe to call in nested 
+    ///       contexts. It is not safe to call from multiple threads, though.
     HD_API
     void SceneIndexEmulationNoticeBatchEnd();
 
+    HD_API
+    std::string GetInstanceName() const;
 
 private:
     // The render index constructor is private so we can check
     // renderDelegate before construction: see HdRenderIndex::New(...).
     HdRenderIndex(
         HdRenderDelegate *renderDelegate, 
-        HdDriverVector const& drivers);
+        HdDriverVector const& drivers,
+        const std::string &instanceName=std::string());
 
     // ---------------------------------------------------------------------- //
     // Private Helper methods 
     // ---------------------------------------------------------------------- //
 
     // Go through all RPrims and reallocate their instance ids
-    // This is called once we have exhausted all all 24bit instance ids.
+    // This is called once we have exhausted all 24bit instance ids.
     void _CompactPrimIds();
 
     // Allocate the next available instance id to the prim
@@ -498,9 +509,12 @@ private:
 
     HdLegacyPrimSceneIndexRefPtr _emulationSceneIndex;
     HdNoticeBatchingSceneIndexRefPtr _emulationNoticeBatchingSceneIndex;
+    unsigned int _noticeBatchingDepth;
+
     std::unique_ptr<class HdSceneIndexAdapterSceneDelegate> _siSd;
 
     HdMergingSceneIndexRefPtr _mergingSceneIndex;
+    HdSceneIndexBaseRefPtr _terminalSceneIndex;
 
     struct _TaskInfo {
         HdSceneDelegate *sceneDelegate;
@@ -531,6 +545,9 @@ private:
 
     HdRenderDelegate *_renderDelegate;
     HdDriverVector _drivers;
+
+
+    std::string _instanceName;
 
     // ---------------------------------------------------------------------- //
     // Sync State

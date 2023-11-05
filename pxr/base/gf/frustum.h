@@ -38,8 +38,7 @@
 #include "pxr/base/gf/vec2d.h"
 #include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/api.h"
-
-#include <boost/functional/hash.hpp>
+#include "pxr/base/tf/hash.h"
 
 #include <array>
 #include <atomic>
@@ -190,14 +189,14 @@ class GfFrustum {
     }        
 
     friend inline size_t hash_value(const GfFrustum &f) {
-        size_t h = 0;
-        boost::hash_combine(h, f._position);
-        boost::hash_combine(h, f._rotation);
-        boost::hash_combine(h, f._window);
-        boost::hash_combine(h, f._nearFar);
-        boost::hash_combine(h, f._viewDistance);
-        boost::hash_combine(h, f._projectionType);
-        return h;
+        return TfHash::Combine(
+            f._position,
+            f._rotation,
+            f._window,
+            f._nearFar,
+            f._viewDistance,
+            f._projectionType
+        );
     }
 
     // Equality operator. true iff all parts match.
@@ -513,37 +512,46 @@ class GfFrustum {
     GF_API
     std::vector<GfVec3d> ComputeCornersAtDistance(double d) const;
 
-    /// Returns a frustum that is a narrowed-down version of this frustum,
-    /// such that the frustum rectangle on the near plane encloses \p point
-    /// with at most \p halfSize[0] distance on the left and right and at most
-    /// \p halfSize[1] distance on the top and bottom. (If \p point is closer
-    /// than the half size to a side of the frustum, that side is left alone.
-    /// The point and sizes are in normalized 2D coordinates; they range from
-    /// (-1, -1) at the lower left corner of the near-plane window rectangle
-    /// to (1,1) at the upper right corner.
+    /// Returns a frustum that is a narrowed-down version of this frustum. The
+    /// new frustum has the same near and far planes, but the other planes are
+    /// adjusted to be centered on \p windowPos with the new width and height
+    /// obtained from the existing width and height by multiplying by \p size[0]
+    /// and \p size[1], respectively.  Finally, the new frustum is clipped
+    /// against this frustum so that it is completely contained in the existing
+    /// frustum.
     ///
-    /// \p point is a 2d point expressed as a normalized window position. 
+    /// \p windowPos is given in normalized coords (-1 to +1 in both dimensions).
+    /// \p size is given as a scalar (0 to 1 in both dimensions).
+    ///
+    /// If the \p windowPos or \p size given is outside these ranges, it may
+    /// result in returning a collapsed frustum.
     ///
     /// This method is useful for computing a volume to use for interactive
     /// picking.
-    GF_API GfFrustum    ComputeNarrowedFrustum(const GfVec2d &point,
-                                               const GfVec2d &halfSize) const;
+    GF_API GfFrustum    ComputeNarrowedFrustum(const GfVec2d &windowPos,
+                                               const GfVec2d &size) const;
 
-    /// Returns a frustum that is a narrowed-down version of this frustum,
-    /// such that the frustum rectangle on the near plane encloses \p point
-    /// with at most \p halfSize[0] distance on the left and right and at most
-    /// \p halfSize[1] distance on the top and bottom. (If \p point is closer
-    /// than the half size to a side of the frustum, that side is left alone.
-    /// The point and sizes are in normalized 2D coordinates; they range from
-    /// (-1, -1) at the lower left corner of the near-plane window rectangle
-    /// to (1,1) at the upper right corner.
+    /// Returns a frustum that is a narrowed-down version of this frustum. The
+    /// new frustum has the same near and far planes, but the other planes are
+    /// adjusted to be centered on \p worldPoint with the new width and height
+    /// obtained from the existing width and height by multiplying by \p size[0]
+    /// and \p size[1], respectively.  Finally, the new frustum is clipped
+    /// against this frustum so that it is completely contained in the existing
+    /// frustum.
     ///
-    /// \p point is a 3d point expressed in world coordinates
+    /// \p worldPoint is given in world space coordinates.
+    /// \p size is given as a scalar (0 to 1 in both dimensions).
+    ///
+    /// If the \p size given is outside this range, it may result in returning
+    /// a collapsed frustum.
+    ///
+    /// If the \p worldPoint is at or behind the eye of the frustum, it will
+    /// return a frustum equal to this frustum.
     ///
     /// This method is useful for computing a volume to use for interactive
     /// picking.
     GF_API GfFrustum    ComputeNarrowedFrustum(const GfVec3d &worldPoint,
-                                               const GfVec2d &halfSize) const;
+                                               const GfVec2d &size) const;
 
     /// Builds and returns a \c GfRay that starts at the viewpoint and extends
     /// through the given \a windowPos given in normalized coords (-1 to +1 in
@@ -633,21 +641,24 @@ class GfFrustum {
                                     const GfVec3d &camSpaceFrom, 
                                     const GfVec3d &camSpaceDir) const;
 
-    // Returns a frustum that is a narrowed-down version of this frustum, such
-    // that the frustum rectangle on the near plane encloses \p point with at
-    // most \p halfSize[0] distance on the left and right and at most \p
-    // halfSize[1] distance on the top and bottom. (If \p point is closer than
-    // the half size to a side of the frustum, that side is left alone. The
-    // point and sizes are in normalized 2D coordinates; they range from (-1,
-    // -1) at the lower left corner of the near-plane window rectangle to
-    // (1,1) at the upper right corner.
+    // Returns a frustum that is a narrowed-down version of this frustum. The
+    // new frustum has the same near and far planes, but the other planes are
+    // adjusted to be centered on \p windowPoint with the new width and height
+    // obtained from the existing width and height by multiplying by \p size[0]
+    // and \p size[1], respectively.  Finally, the new frustum is clipped
+    // against this frustum so that it is completely contained in the existing
+    // frustum.
     //
-    // \p windowPoint is expressed in window coordinates
+    // \p windowPoint is given in window coordinates.
+    // \p size is given as a scalar (0 to 1 in both dimensions).
+    //
+    // If the \p size given is outside this range, it may result in returning
+    // a collapsed frustum.
     //
     // This method is useful for computing a volume to use for interactive
     // picking.
     GfFrustum           _ComputeNarrowedFrustumSub(const GfVec2d windowPoint, 
-                                    const GfVec2d &halfSize) const;
+                                    const GfVec2d &size) const;
 
     bool _SegmentIntersects(GfVec3d const &p0, uint32_t p0Mask,
                             GfVec3d const &p1, uint32_t p1Mask) const;
