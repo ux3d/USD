@@ -31,6 +31,7 @@
 #include <atomic>
 #include <functional>
 #include <type_traits>
+#include <cstddef>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
